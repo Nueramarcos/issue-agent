@@ -26,6 +26,8 @@ Most coding agents are cloud-only. Issue Agent runs on **your** machine, uses **
 | Rotate fleet | `issue-agent fleet` |
 | Parallel supervisor | `issue-agent airport` |
 | Upstream OSS PRs | `issue-agent upstream` |
+| Scout upstream issues | `issue-agent scout` |
+| Next upstream fix | `issue-agent hunt` |
 
 ## Install
 

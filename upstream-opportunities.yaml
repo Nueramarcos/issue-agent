@@ -26,6 +26,20 @@ live_queries:
 opportunities:
   # --- Active / follow-up ---
   - repo: tinygrad/tinygrad
+    number: 16685
+    title: "fix(ops): propagate NaN in Tensor.max reduction"
+    url: https://github.com/tinygrad/tinygrad/pull/16685
+    score: 97
+    tier: 1
+    effort: xs
+    impact: medium
+    tags: [tinygrad, pr-open, bug, good-first]
+    hardware_fit: [any]
+    why: "PR open for #862 — monitor CI, respond to review."
+    test_hint: PYTHONPATH=. python3 -c "from tinygrad import Tensor; import numpy as np, math; assert math.isnan(Tensor([1,np.nan]).max().numpy())"
+    status: pr-open
+
+  - repo: tinygrad/tinygrad
     number: 16683
     title: "test(mockgpu): use float32 zero as wmma sum accumulator start"
     url: https://github.com/tinygrad/tinygrad/pull/16683

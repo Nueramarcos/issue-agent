@@ -2805,6 +2805,28 @@ def filter_scout_opportunities(
     return out
 
 
+def update_scout_queue_item(repo: str, number: int, **fields: Any) -> bool:
+    queue = load_scout_queue()
+    key = f"{repo}#{number}"
+    for item in queue:
+        if _scout_item_key(item) == key:
+            item.update(fields)
+            item["updated"] = datetime.now(timezone.utc).isoformat()
+            save_scout_queue(queue)
+            return True
+    return False
+
+
+def next_scout_work() -> dict[str, Any] | None:
+    """Highest-priority pending scout-queue item (in_progress first, then queued)."""
+    queue = load_scout_queue()
+    for status in ("in_progress", "queued"):
+        pending = [q for q in queue if q.get("status") == status]
+        if pending:
+            return sorted(pending, key=lambda x: (-int(x.get("score") or 0), int(x.get("tier") or 9)))[0]
+    return None
+
+
 def enqueue_scout_items(items: list[dict[str, Any]], *, max_n: int) -> int:
     queue = load_scout_queue()
     existing = {_scout_item_key(q) for q in queue}
@@ -2906,6 +2928,51 @@ def cmd_scout(args: argparse.Namespace) -> int:
     if args.enqueue:
         n = enqueue_scout_items(items, max_n=args.enqueue)
         print(f"Enqueued {n} item(s) → {SCOUT_QUEUE_FILE}")
+
+    return 0
+
+
+def cmd_hunt(args: argparse.Namespace) -> int:
+    """Show next upstream work item and the exact commands to run."""
+    load_secrets()
+    item = next_scout_work()
+    if not item and args.enqueue:
+        cmd_scout(argparse.Namespace(
+            tag=None, tier=1, arch=None, min_score=0, limit=3, live=False, live_limit=6,
+            enqueue=args.enqueue, json=False,
+        ))
+        item = next_scout_work()
+    if not item:
+        print("Scout queue empty. Run: issue-agent scout --tier 1 --enqueue 3")
+        return 0
+
+    repo = item.get("repo") or ""
+    num = item.get("number") or 0
+    slug = repo.split("/")[-1] if repo else "upstream"
+    ws = Path(os.environ.get("ISSUE_AGENT_UPSTREAM_WS", HOME / "upstream-workspaces")) / slug
+    fork_ws = WORKSPACES / f"Nueramarcos_{slug}"
+
+    print(f"Hunt — next: {repo} #{num}\n")
+    print(f"  {item.get('title', '')}")
+    print(f"  {item.get('url', '')}")
+    if item.get("why"):
+        print(f"  → {item['why']}")
+    if item.get("test_hint"):
+        print(f"  $ {item['test_hint']}")
+    print()
+    print("  playbook:")
+    print(f"    gh repo fork {repo} --clone {ws}   # or use {fork_ws}")
+    print(f"    cd {fork_ws if fork_ws.exists() else ws}")
+    print(f"    git fetch upstream master && git checkout -B fix/issue-{num} upstream/master")
+    print(f"    # reproduce, fix, test")
+    print(f"    git push -u origin fix/issue-{num}")
+    print(f"    gh pr create -R {repo} --head Nueramarcos:fix/issue-{num} --title '...' --body 'Fixes #{num}'")
+    print()
+    print(f"  queue: {SCOUT_QUEUE_FILE}")
+
+    if args.mark:
+        update_scout_queue_item(repo, num, status=args.mark)
+        print(f"  marked {repo}#{num} → {args.mark}")
 
     return 0
 
@@ -4293,6 +4360,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--enqueue", type=int, metavar="N", help="Add top N visible items to scout-queue.json")
     s.add_argument("--json", action="store_true", help="Machine-readable output")
     s.set_defaults(func=cmd_scout)
+
+    s = sub.add_parser("hunt", help="Next scout-queue item + upstream PR playbook")
+    s.add_argument("--enqueue", type=int, metavar="N", help="Seed tier-1 queue if empty, then show next")
+    s.add_argument("--mark", choices=["queued", "in_progress", "pr_open", "done", "skipped"])
+    s.set_defaults(func=cmd_hunt)
 
     s = sub.add_parser("collect", help="Collect issues from backlog.yaml + auto-discovery")
     s.add_argument("repo", nargs="?", help="Single repo (default: all in repos.yaml)")
