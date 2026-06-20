@@ -1435,6 +1435,8 @@ FAILURE_DIGEST = AGENT_ROOT / "failures.json"
 AIRPORT_CONFIG = AGENT_ROOT / "airport.yaml"
 UPSTREAM_CONFIG = AGENT_ROOT / "upstream.yaml"
 UPSTREAM_BACKLOG_FILE = AGENT_ROOT / "upstream-backlog.yaml"
+UPSTREAM_OPPORTUNITIES_FILE = AGENT_ROOT / "upstream-opportunities.yaml"
+SCOUT_QUEUE_FILE = AGENT_ROOT / "scout-queue.json"
 AIRPORT_STATUS = AGENT_ROOT / "airport-status.json"
 AIRPORT_PID_DIR = LOG_DIR / "airport-pids"
 SOLVABILITY_STATE = AGENT_ROOT / "solvability.json"
@@ -2665,6 +2667,247 @@ def discover_repo_issues(repo: str) -> list[dict[str, Any]]:
             }
         )
     return found
+
+
+def load_upstream_opportunities() -> dict[str, Any]:
+    if not UPSTREAM_OPPORTUNITIES_FILE.exists() or not yaml:
+        return {"hardware": {}, "live_queries": [], "opportunities": []}
+    data = yaml.safe_load(UPSTREAM_OPPORTUNITIES_FILE.read_text()) or {}
+    return {
+        "hardware": data.get("hardware") or {},
+        "live_queries": list(data.get("live_queries") or []),
+        "opportunities": list(data.get("opportunities") or []),
+    }
+
+
+def load_scout_queue() -> list[dict[str, Any]]:
+    if not SCOUT_QUEUE_FILE.exists():
+        return []
+    try:
+        data = json.loads(SCOUT_QUEUE_FILE.read_text())
+        return list(data.get("queue", []))
+    except json.JSONDecodeError:
+        return []
+
+
+def save_scout_queue(queue: list[dict[str, Any]]) -> None:
+    SCOUT_QUEUE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SCOUT_QUEUE_FILE.write_text(
+        json.dumps({"queue": queue, "ts": datetime.now(timezone.utc).isoformat()}, indent=2)
+    )
+
+
+def _scout_item_key(item: dict[str, Any]) -> str:
+    repo = item.get("repo") or ""
+    num = item.get("number") or 0
+    return f"{repo}#{num}"
+
+
+def gh_search_issues(query: str, *, limit: int = 8) -> list[dict[str, Any]]:
+    from urllib.parse import quote_plus
+
+    if not ensure_gh_ready():
+        return []
+    url = f"search/issues?q={quote_plus(query)}&per_page={limit}&sort=updated"
+    result = run(["gh", "api", url], check=False)
+    if result.returncode != 0:
+        log(f"scout search failed: {query}")
+        return []
+    try:
+        return list(json.loads(result.stdout or "{}").get("items", []))
+    except json.JSONDecodeError:
+        return []
+
+
+def _live_issue_to_opportunity(hit: dict[str, Any], tags: list[str], hw: dict[str, Any]) -> dict[str, Any]:
+    repo_url = hit.get("repository_url") or ""
+    repo = repo_url.rsplit("/", 2)[-2] + "/" + repo_url.rsplit("/", 1)[-1] if repo_url else ""
+    title = hit.get("title") or ""
+    labels = {l.get("name", "").lower() for l in hit.get("labels") or []}
+    body = (hit.get("body") or "").lower()
+    arch = (hw.get("arch") or "").lower()
+    score = 55
+    if "good first issue" in labels or "good-first-issue" in labels:
+        score += 15
+    if "bug" in labels:
+        score += 8
+    if "bounty" in title.lower() or "bounty" in labels:
+        score += 5
+    if "amd" in title.lower() or "rocm" in title.lower() or "hip" in title.lower():
+        score += 12
+    if arch and arch in title.lower():
+        score += 20
+    if "commaai" in repo or "openpilot" in title.lower() or "tesla" in body:
+        score += 6
+    if hit.get("pull_request"):
+        score -= 25
+    effort = "m"
+    if "good first" in labels or len(title) < 60:
+        effort = "s"
+    if "bounty" in title.lower() or "refactor" in title.lower():
+        effort = "l"
+    tier = 1 if score >= 85 else 2 if score >= 70 else 3
+    return {
+        "repo": repo,
+        "number": int(hit.get("number") or 0),
+        "title": title,
+        "url": hit.get("html_url") or "",
+        "score": min(score, 99),
+        "tier": tier,
+        "effort": effort,
+        "impact": "medium",
+        "tags": list(dict.fromkeys([*tags, "live"])),
+        "hardware_fit": [arch] if arch and arch in title.lower() else ["any"],
+        "why": "Live GitHub search hit — verify repro steps before committing.",
+        "status": "open",
+        "source": "live",
+    }
+
+
+def merge_scout_opportunities(
+    curated: list[dict[str, Any]],
+    live: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in sorted([*curated, *live], key=lambda x: (-int(x.get("score") or 0), int(x.get("tier") or 9))):
+        key = _scout_item_key(item)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    return merged
+
+
+def filter_scout_opportunities(
+    items: list[dict[str, Any]],
+    *,
+    tag: str | None = None,
+    tier: int | None = None,
+    min_score: int = 0,
+    arch: str | None = None,
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    tag_l = (tag or "").lower()
+    arch_l = (arch or "").lower()
+    for item in items:
+        if int(item.get("score") or 0) < min_score:
+            continue
+        if tier is not None and int(item.get("tier") or 9) > tier:
+            continue
+        tags = [t.lower() for t in item.get("tags") or []]
+        fit = [f.lower() for f in item.get("hardware_fit") or []]
+        if tag_l and tag_l not in tags and tag_l not in (item.get("title") or "").lower():
+            continue
+        if arch_l and arch_l not in fit and arch_l not in (item.get("title") or "").lower():
+            continue
+        out.append(item)
+    return out
+
+
+def enqueue_scout_items(items: list[dict[str, Any]], *, max_n: int) -> int:
+    queue = load_scout_queue()
+    existing = {_scout_item_key(q) for q in queue}
+    added = 0
+    for item in items:
+        if added >= max_n:
+            break
+        key = _scout_item_key(item)
+        if key in existing:
+            continue
+        queue.append(
+            {
+                "repo": item.get("repo"),
+                "number": item.get("number"),
+                "title": item.get("title"),
+                "url": item.get("url"),
+                "score": item.get("score"),
+                "tier": item.get("tier"),
+                "effort": item.get("effort"),
+                "tags": item.get("tags") or [],
+                "why": item.get("why", ""),
+                "test_hint": item.get("test_hint", ""),
+                "status": "queued",
+                "added": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        existing.add(key)
+        added += 1
+    if added:
+        save_scout_queue(queue)
+    return added
+
+
+def cmd_scout(args: argparse.Namespace) -> int:
+    load_secrets()
+    catalog = load_upstream_opportunities()
+    hw = catalog.get("hardware") or {}
+    curated = list(catalog.get("opportunities") or [])
+    live_items: list[dict[str, Any]] = []
+
+    if args.live:
+        if not ensure_gh_ready():
+            print("  [FAIL] gh not authenticated — run: gh auth login")
+            return 1
+        for spec in catalog.get("live_queries") or []:
+            q = spec.get("q") if isinstance(spec, dict) else None
+            if not q:
+                continue
+            tags = list(spec.get("tags") or []) if isinstance(spec, dict) else []
+            for hit in gh_search_issues(q, limit=args.live_limit):
+                live_items.append(_live_issue_to_opportunity(hit, tags, hw))
+
+    items = merge_scout_opportunities(curated, live_items)
+    items = filter_scout_opportunities(
+        items,
+        tag=args.tag,
+        tier=args.tier,
+        min_score=args.min_score,
+        arch=args.arch,
+    )
+    if args.limit:
+        items = items[: args.limit]
+
+    queue = load_scout_queue()
+    queued_keys = {_scout_item_key(q) for q in queue if q.get("status") in ("queued", "in_progress")}
+
+    if args.json:
+        print(json.dumps({"hardware": hw, "items": items, "queued": queue}, indent=2))
+    else:
+        gpu = hw.get("gpu") or "any"
+        arch = hw.get("arch") or "any"
+        print(f"Upstream scout — {gpu} ({arch})\n")
+        if args.live:
+            print(f"  live search: {len(live_items)} hits merged\n")
+        if queue:
+            pending = [q for q in queue if q.get("status") in ("queued", "in_progress")]
+            print(f"  scout queue: {len(pending)} pending (scout-queue.json)\n")
+        print(f"{'Score':>5} {'T':>2} {'Eff':>3}  {'Repo':<22} {'#':>5}  Tags")
+        print("-" * 78)
+        for item in items:
+            key = _scout_item_key(item)
+            mark = "*" if key in queued_keys else " "
+            tags = ",".join((item.get("tags") or [])[:4])
+            repo_short = (item.get("repo") or "")[-22:]
+            num = item.get("number") or 0
+            print(
+                f"{mark}{int(item.get('score') or 0):>4} T{item.get('tier', '?')} "
+                f"{str(item.get('effort', '?')):>3}  {repo_short:<22} {num:>5}  {tags[:28]}"
+            )
+            title = (item.get("title") or "")[:72]
+            print(f"      {title}")
+            if item.get("why"):
+                print(f"      → {item['why'][:100]}")
+            if item.get("test_hint"):
+                print(f"      $ {item['test_hint'][:90]}")
+            print(f"      {item.get('url', '')}")
+            print()
+
+    if args.enqueue:
+        n = enqueue_scout_items(items, max_n=args.enqueue)
+        print(f"Enqueued {n} item(s) → {SCOUT_QUEUE_FILE}")
+
+    return 0
 
 
 def seed_backlog_issues(repo: str, max_new: int = 2) -> list[int]:
@@ -4035,6 +4278,21 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("repo", nargs="?", help="Optional single repo")
     s.add_argument("--ci-max", type=int, default=2, help="Max ci-heal items after rotate")
     s.set_defaults(func=cmd_fleet)
+
+    s = sub.add_parser(
+        "scout",
+        help="Rank upstream OSS issues (Tesla/AMD/tinygrad lane) — curated + optional live search",
+    )
+    s.add_argument("--tag", "-t", help="Filter by tag (amd, tinygrad, tesla, bounty, good-first, …)")
+    s.add_argument("--tier", type=int, help="Max tier to show (1=do now, 2=soon, 3=later)")
+    s.add_argument("--arch", help="Filter by hardware arch (default: gfx1010 from catalog)")
+    s.add_argument("--min-score", type=int, default=0, help="Minimum score 0–100")
+    s.add_argument("--limit", "-n", type=int, default=15, help="Max rows to print")
+    s.add_argument("--live", action="store_true", help="Merge live GitHub search hits from upstream-opportunities.yaml")
+    s.add_argument("--live-limit", type=int, default=6, help="Max hits per live query")
+    s.add_argument("--enqueue", type=int, metavar="N", help="Add top N visible items to scout-queue.json")
+    s.add_argument("--json", action="store_true", help="Machine-readable output")
+    s.set_defaults(func=cmd_scout)
 
     s = sub.add_parser("collect", help="Collect issues from backlog.yaml + auto-discovery")
     s.add_argument("repo", nargs="?", help="Single repo (default: all in repos.yaml)")

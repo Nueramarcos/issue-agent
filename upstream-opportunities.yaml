@@ -1,0 +1,260 @@
+# Curated upstream issues — Tesla/AMD/tinygrad/ML lane.
+# View: issue-agent scout
+# Refresh live hits: issue-agent scout --live
+# Queue top picks: issue-agent scout --enqueue 5
+
+hardware:
+  gpu: RX 5700 XT
+  arch: gfx1010
+  notes: RDNA1 — prioritize MOCKKFD/LLVM emulator fixes and gfx1010 arch gaps
+
+# GitHub search queries (--live merges results, de-duped with curated list)
+live_queries:
+  - q: repo:tinygrad/tinygrad is:open is:issue AMD
+    tags: [tinygrad, amd]
+  - q: repo:tinygrad/tinygrad is:open good first issue
+    tags: [tinygrad, good-first]
+  - q: repo:pytorch/vision is:open ROCm OR AMD
+    tags: [pytorch, amd, vision]
+  - q: repo:triton-lang/triton is:open AMD label:good-first-issue
+    tags: [triton, amd]
+  - q: repo:ggml-org/llama.cpp is:open ROCm OR HIP
+    tags: [llama.cpp, amd, inference]
+  - q: repo:commaai/openpilot is:open tinygrad OR AMD OR GPU
+    tags: [tesla, commaai, autopilot]
+
+opportunities:
+  # --- Active / follow-up ---
+  - repo: tinygrad/tinygrad
+    number: 16683
+    title: "test(mockgpu): use float32 zero as wmma sum accumulator start"
+    url: https://github.com/tinygrad/tinygrad/pull/16683
+    score: 98
+    tier: 1
+    effort: s
+    impact: high
+    tags: [tinygrad, amd, pr-open, emulator]
+    hardware_fit: [any]
+    why: Your open PR — respond to review, keep CI green on MOCKKFD/AMD lanes.
+    test_hint: MOCKKFD=1 AMD=1 python3 -m pytest -x -q test/test_ops.py -k wmma
+    status: pr-open
+
+  # --- gfx1010 / your GPU ---
+  - repo: tinygrad/tinygrad
+    number: 7504
+    title: 'AMD gfx1010: "Unsupported arch"'
+    url: https://github.com/tinygrad/tinygrad/issues/7504
+    score: 96
+    tier: 1
+    effort: m
+    impact: high
+    tags: [tinygrad, amd, gfx1010, hardware]
+    hardware_fit: [gfx1010]
+    why: Directly blocks RX 5700 XT on AMD backend — high leverage if you can add arch table entry + smoke test.
+    test_hint: AMD=1 python3 -c "from tinygrad import Device; print(Device.DEFAULT)"
+    status: open
+
+  # --- Small, testable bugs ---
+  - repo: tinygrad/tinygrad
+    number: 862
+    title: "Tensor([1, nan]).max() should be nan"
+    url: https://github.com/tinygrad/tinygrad/issues/862
+    score: 94
+    tier: 1
+    effort: xs
+    impact: medium
+    tags: [tinygrad, bug, good-first]
+    hardware_fit: [any]
+    why: Tiny reproducible correctness fix — ideal first merged upstream PR.
+    test_hint: python3 -m pytest -x -q test/test_ops.py -k max
+    status: open
+
+  - repo: tinygrad/tinygrad
+    number: 6909
+    title: "If BF16 isn't supported, it should autocast to float"
+    url: https://github.com/tinygrad/tinygrad/issues/6909
+    score: 90
+    tier: 1
+    effort: s
+    impact: medium
+    tags: [tinygrad, good-first, dtype]
+    hardware_fit: [any]
+    why: Labeled good first issue; dtype edge case with clear expected behavior.
+    status: open
+
+  - repo: tinygrad/tinygrad
+    number: 7889
+    title: Make TYPED=1 work
+    url: https://github.com/tinygrad/tinygrad/issues/7889
+    score: 85
+    tier: 2
+    effort: m
+    impact: medium
+    tags: [tinygrad, good-first, typing]
+    hardware_fit: [any]
+    why: Type-safety lane — no GPU required; good when emulator PR is waiting on review.
+    test_hint: TYPED=1 python3 -m pytest -x -q test/test_tiny.py
+    status: open
+
+  # --- AMD backend / memory ---
+  - repo: tinygrad/tinygrad
+    number: 16542
+    title: can't save pickled jit to disk when RAM < VRAM
+    url: https://github.com/tinygrad/tinygrad/issues/16542
+    score: 82
+    tier: 2
+    effort: m
+    impact: high
+    tags: [tinygrad, amd, memory, bug]
+    hardware_fit: [amd]
+    why: Recent AMD-specific pain — affects real training workflows on consumer GPUs.
+    status: open
+
+  - repo: tinygrad/tinygrad
+    number: 13513
+    title: sharding empty uses double peak mem and residual mem
+    url: https://github.com/tinygrad/tinygrad/issues/13513
+    score: 78
+    tier: 2
+    effort: l
+    impact: high
+    tags: [tinygrad, amd, memory, sharding]
+    hardware_fit: [amd]
+    why: Memory efficiency on AMD — meaningful if you can reproduce with MOCKKFD.
+    status: open
+
+  - repo: tinygrad/tinygrad
+    number: 10843
+    title: all buffers must be on the same device (multi-GPU AMD)
+    url: https://github.com/tinygrad/tinygrad/issues/10843
+    score: 72
+    tier: 3
+    effort: l
+    impact: medium
+    tags: [tinygrad, amd, multi-gpu]
+    hardware_fit: [amd]
+    why: Needs multi-GPU setup — skip unless you have second AMD card.
+    status: open
+
+  # --- Tesla / commaai / openpilot adjacency ---
+  - repo: tinygrad/tinygrad
+    number: 12649
+    title: DEV=AMD AMD_IFACE=USB hangs on model compile (openpilot/supercombo)
+    url: https://github.com/tinygrad/tinygrad/issues/12649
+    score: 88
+    tier: 2
+    effort: xl
+    impact: high
+    tags: [tinygrad, amd, tesla, commaai, autopilot]
+    hardware_fit: [amd]
+    why: Bridges tinygrad ↔ commaai/openpilot — high visibility but needs USB AMD stack + model weights.
+    status: open
+
+  # --- Bounties (hard, high upside) ---
+  - repo: tinygrad/tinygrad
+    number: 6928
+    title: "[Bounty] NVIDIA e2e full FP16 matmul speed from Tensor.matmul"
+    url: https://github.com/tinygrad/tinygrad/issues/6928
+    score: 60
+    tier: 3
+    effort: xl
+    impact: high
+    tags: [tinygrad, bounty, cuda]
+    hardware_fit: [nvidia]
+    why: Bounty economics — needs NVIDIA GPU; study for matmul patterns applicable to AMD bounty.
+    status: open
+
+  - repo: tinygrad/tinygrad
+    number: 5569
+    title: "[DRAFT] AMD >100TFLOPS matmul bounty (7900XTX)"
+    url: https://github.com/tinygrad/tinygrad/issues/5569
+    score: 65
+    tier: 3
+    effort: xl
+    impact: high
+    tags: [tinygrad, amd, bounty, matmul]
+    hardware_fit: [rdna3]
+    why: AMD matmul bounty outline — learn WMMA/HIP patterns; gfx1010 is weaker target but concepts transfer.
+    status: open
+
+  # --- PyTorch vision / ROCm ---
+  - repo: pytorch/vision
+    number: 9342
+    title: "[ROCM] Add rocjpeg support for GPU image decoding"
+    url: https://github.com/pytorch/vision/issues/9342
+    score: 80
+    tier: 2
+    effort: l
+    impact: medium
+    tags: [pytorch, vision, amd, rocm]
+    hardware_fit: [amd]
+    why: ROCm-native decode — aligns with your vision fork lane; needs ROCm + rocJPEG dev env.
+    status: open
+
+  - repo: pytorch/vision
+    number: 9450
+    title: Rotated bounding box NMS implementation for CPU
+    url: https://github.com/pytorch/vision/issues/9450
+    score: 76
+    tier: 2
+    effort: m
+    impact: medium
+    tags: [pytorch, vision, good-first, cpu]
+    hardware_fit: [any]
+    why: CPU-only good first issue — no GPU friction; pairs with nexus-vision work.
+    status: open
+
+  # --- Triton AMD ---
+  - repo: triton-lang/triton
+    number: 10449
+    title: "[AMD] Fix RDNA DPP bound control"
+    url: https://github.com/triton-lang/triton/issues/10449
+    score: 74
+    tier: 3
+    effort: l
+    impact: high
+    tags: [triton, amd, rdna, compiler]
+    hardware_fit: [rdna]
+    why: Compiler/backend fix — upstream of tinygrad AMD codegen; steep learning curve.
+    status: open
+
+  - repo: triton-lang/triton
+    number: 10534
+    title: "[AMD][NFC] Refactor FP cast conversion driver"
+    url: https://github.com/triton-lang/triton/issues/10534
+    score: 68
+    tier: 3
+    effort: m
+    impact: low
+    tags: [triton, amd, refactor]
+    hardware_fit: [amd]
+    why: NFC refactor — good for learning Triton AMD tree, lower merge urgency.
+    status: open
+
+  # --- Inference / llama.cpp ROCm ---
+  - repo: ggml-org/llama.cpp
+    number: 24450
+    title: "vulkan-shaders-gen: fail build when shader compile fails"
+    url: https://github.com/ggml-org/llama.cpp/issues/24450
+    score: 70
+    tier: 2
+    effort: s
+    impact: medium
+    tags: [llama.cpp, build, good-first]
+    hardware_fit: [any]
+    why: Build hygiene — no ML math; pairs with your llama.cpp fork validate lane.
+    status: open
+
+  # --- IREE HIP (AMD compiler stack) ---
+  - repo: iree-org/iree
+    number: 23575
+    title: "HIP external stream: set_external_stream_data_completed fires before sync"
+    url: https://github.com/iree-org/iree/issues/23575
+    score: 66
+    tier: 3
+    effort: l
+    impact: medium
+    tags: [iree, amd, hip, stream]
+    hardware_fit: [amd]
+    why: HIP stream correctness — relevant to PyTorch/ROCm ecosystem; heavy C++ build.
+    status: open

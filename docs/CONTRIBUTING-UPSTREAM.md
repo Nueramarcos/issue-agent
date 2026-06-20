@@ -68,10 +68,31 @@ MOCKKFD=1 AMD=1 LLVM=gfx1201 python3 -m pytest -x -q test/test_ops.py
 2. Add test in `test/` that fails before fix.
 3. Fix in one file; mention "zero functional change" when true.
 
+## Scout upstream issues (Tesla / AMD / tinygrad lane)
+
+Curated queue lives in `upstream-opportunities.yaml`. Ranked view:
+
+```bash
+issue-agent scout                    # top 15 by score
+issue-agent scout --tag amd          # AMD/ROCm/HIP only
+issue-agent scout --tag tesla        # commaai / autopilot adjacency
+issue-agent scout --tier 1           # do-now tier only
+issue-agent scout --live             # merge live GitHub search hits
+issue-agent scout --enqueue 5        # queue top 5 into scout-queue.json
+```
+
+Work one item:
+
+1. `issue-agent scout --tier 1 --limit 3` — pick the highest-score row.
+2. Fork + clone: `gh repo fork tinygrad/tinygrad --clone`
+3. Reproduce with the `test_hint` line from scout output.
+4. Fix, push, open PR — track in scout queue (`status: in_progress` → `pr_open`).
+
 ## Tracking open upstream PRs
 
 ```bash
 gh pr list --author @me --state open
+issue-agent scout --tag tinygrad     # includes your open PRs in curated list
 issue-agent failures    # blocked items in failure ledger
 ```
 

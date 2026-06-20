@@ -15,6 +15,7 @@ failure-ledger.json
 failures.json
 fleet-state.json
 local-queue.json
+scout-queue.json
 solvability.json
 status.json
 
