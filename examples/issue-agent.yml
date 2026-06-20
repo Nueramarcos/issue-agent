@@ -1,0 +1,14 @@
+# Per-repo overrides — copy to your repo root as .issue-agent.yml
+
+test_command: "python3 -m pytest -q"
+model: ollama/qwen2.5-coder:7b
+triage_model: qwen2.5-coder:1.5b
+draft_pr: false
+auto_merge: true
+max_files: 8
+trigger_label: agent-triage
+skip_labels:
+  - wontfix
+  - question
+  - help wanted
+  - architecture

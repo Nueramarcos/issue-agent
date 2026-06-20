@@ -20,4 +20,8 @@ status.json
 
 # Secrets
 .env
+.env.local
 secrets.env
+
+# Docker
+docker-compose.override.yml

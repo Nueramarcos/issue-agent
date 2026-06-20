@@ -1,0 +1,62 @@
+# Copy to your repo: .github/workflows/agent-triage-on-failure.yml
+#
+# When CI fails on main, opens an agent-triage issue for Issue Agent to fix.
+# Requires label "agent-triage" to exist (create it once in GitHub UI).
+
+name: Agent triage on CI failure
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main, master]
+
+jobs:
+  open-agent-issue:
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open agent-triage issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const title = `CI failed: ${run.name} (${run.head_branch})`;
+            const body = [
+              'Automated CI failure — Issue Agent can attempt a fix.',
+              '',
+              `**Workflow:** ${run.name}`,
+              `**Run:** ${run.html_url}`,
+              `**Commit:** ${run.head_sha}`,
+              `**Branch:** ${run.head_branch}`,
+              '',
+              '## Task',
+              'Investigate the CI failure, apply a minimal fix, ensure tests pass.',
+              '',
+              '---',
+              '*Opened by agent-triage-on-failure workflow*'
+            ].join('\n');
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'agent-triage',
+              per_page: 20
+            });
+
+            const dup = issues.find(i => i.title.startsWith('CI failed:'));
+            if (dup) {
+              core.info(`Existing agent-triage issue #${dup.number} — skipping`);
+              return;
+            }
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+              labels: ['agent-triage', 'ci-failure']
+            });

@@ -1,0 +1,52 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: issue-agent-ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    restart: unless-stopped
+    # Uncomment for AMD GPU (RX 5700 XT class):
+    # devices:
+    #   - /dev/kfd
+    #   - /dev/dri
+
+  models:
+    image: ollama/ollama:latest
+    depends_on:
+      - ollama
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        sleep 5
+        ollama pull qwen2.5-coder:7b
+        ollama pull qwen2.5-coder:1.5b
+        echo "models ready"
+    restart: "no"
+
+  agent:
+    build: .
+    container_name: issue-agent
+    depends_on:
+      - ollama
+    environment:
+      GH_TOKEN: ${GH_TOKEN:-}
+      GITHUB_TOKEN: ${GH_TOKEN:-}
+      OLLAMA_HOST: http://ollama:11434
+      ISSUE_AGENT_ROOT: /app
+      ISSUE_AGENT_AIDER: /opt/venv/bin/aider
+      ISSUE_AGENT_WORKSPACES: /workspaces
+    volumes:
+      - ./:/app
+      - agent_workspaces:/workspaces
+      - ${GH_CONFIG_DIR:-${HOME}/.config/gh}:/root/.config/gh:ro
+    working_dir: /app
+    stdin_open: true
+    tty: true
+
+volumes:
+  ollama_data:
+  agent_workspaces:

@@ -1,84 +1,103 @@
 # Issue Agent
 
-Local autonomous GitHub issue resolver. Triage, fix, test, and open PRs using **Ollama** + **Aider** — no cloud LLM required for core operations.
+**Self-hosted GitHub issue resolver.** Triage, fix, test, and open PRs with local **Ollama** + **Aider** — no cloud LLM required.
 
-Powers the [Nueramarcos](https://github.com/Nueramarcos) repo fleet (orion, forge, nexus, vertex, and upstream forks).
+```bash
+curl -fsSL https://raw.githubusercontent.com/Nueramarcos/issue-agent/main/scripts/install.sh | bash
+gh auth login
+issue-agent status
+issue-agent fix --repo your-user/your-repo --issue 1
+```
 
-## Features
+Full walkthrough: **[docs/QUICKSTART.md](docs/QUICKSTART.md)** (Airport in 5 minutes)
 
-- **Triage** — classify issues with a small local model (`qwen2.5-coder:1.5b`)
-- **Fix** — surgical patches via Aider + `qwen2.5-coder:7b`
-- **Fleet** — rotate across repos, auto-merge squash PRs
-- **Airport** — parallel worker supervisor with failure ledger and CI heal
-- **Collect** — seed issues from `backlog.yaml` and auto-discovery
-- **Upstream** — optional lane for OSS contribution (e.g. tinygrad bounties)
+## Why this exists
 
-## Requirements
+Most coding agents are cloud-only. Issue Agent runs on **your** machine, uses **your** models, and operates on **your** repos (or upstream forks) through `gh` CLI — with a fleet supervisor that keeps working while you sleep.
 
-- Ubuntu/Linux workstation
-- [gh](https://cli.github.com/) CLI authenticated
-- [Ollama](https://ollama.com/) with `qwen2.5-coder:7b` and `qwen2.5-coder:1.5b`
-- [Aider](https://aider.chat/) in a venv (`~/.local/venvs/aider`)
-- Python 3.12+, PyYAML
+## What it does
 
-## Quick start
+| Capability | Command |
+|------------|---------|
+| Health check | `issue-agent status` |
+| Fix one issue | `issue-agent fix --repo owner/repo --issue N` |
+| Fix all `agent-triage` | `issue-agent run --repo owner/repo` |
+| Rotate fleet | `issue-agent fleet` |
+| Parallel supervisor | `issue-agent airport` |
+| Upstream OSS PRs | `issue-agent upstream` |
+
+## Install
+
+### One-liner (Linux)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Nueramarcos/issue-agent/main/scripts/install.sh | bash
+```
+
+Installs: clone, Aider venv, Ollama models (`qwen2.5-coder:7b` + `1.5b`), `~/bin/issue-agent`.
+
+### Docker
+
+```bash
+git clone https://github.com/Nueramarcos/issue-agent.git && cd issue-agent
+cp .env.example .env   # GH_TOKEN=...
+docker compose up -d ollama && docker compose run --rm models
+docker compose run --rm agent status
+```
+
+### Manual
+
+Requirements: Python 3.12+, [gh](https://cli.github.com/), [Ollama](https://ollama.com/), [Aider](https://aider.chat/), PyYAML.
 
 ```bash
 git clone https://github.com/Nueramarcos/issue-agent.git ~/issue-agent
 pip install pyyaml
-
-# Optional per-repo config — copy to repo root as .issue-agent.yml
-cp examples/issue-agent.yml.example /path/to/repo/.issue-agent.yml
-
-# Check toolchain
-python3 ~/issue-agent/issue_agent.py status
-
-# List open issues on a repo
-python3 ~/issue-agent/issue_agent.py list --repo owner/repo
-
-# Fix one issue
-python3 ~/issue-agent/issue_agent.py fix --repo owner/repo --issue 42
-
-# Fleet mode (rotate repos from repos.yaml)
-python3 ~/issue-agent/issue_agent.py fleet
+python3 -m venv ~/.local/venvs/aider && ~/.local/venvs/aider/bin/pip install aider-chat
+ollama pull qwen2.5-coder:7b && ollama pull qwen2.5-coder:1.5b
+cp examples/repos.starter.yaml repos.yaml   # edit your repo
+issue-agent status
 ```
 
-## CLI wrappers
+## Configure your repo
 
-Install `bin/` scripts to `~/bin` and ensure they're on PATH. The main entrypoint is `issue-agent`.
+1. Copy `examples/repos.starter.yaml` → `repos.yaml`, set `your-user/your-repo`
+2. Optional: `examples/issue-agent.yml` → `.issue-agent.yml` in repo root
+3. Create label `agent-triage` on GitHub
+4. Optional: add `examples/workflows/agent-triage-on-failure.yml` to auto-open issues when CI fails
+
+## Demo (no GitHub needed)
 
 ```bash
-cp bin/issue-agent ~/bin/
-chmod +x ~/bin/issue-agent
+issue-agent demo --repo Nueramarcos/orion-ai-agent --dry-run
 ```
 
-## Configuration
+## Docs
 
-| File | Purpose |
-|------|---------|
-| `config.default.toml` | Global defaults (model, labels, workspace paths) |
-| `repos.yaml` | Fleet repo list with test commands and CI workflows |
-| `airport.yaml` | Airport supervisor lanes and intervals |
-| `backlog.yaml` | Issue seeds for `collect` / `factory` |
-| `upstream.yaml` | Upstream OSS repos (optional lane) |
+| Doc | Contents |
+|-----|----------|
+| [QUICKSTART.md](docs/QUICKSTART.md) | Airport in 5 minutes |
+| [CONTRIBUTING-UPSTREAM.md](docs/CONTRIBUTING-UPSTREAM.md) | Land PRs on tinygrad, torchvision, etc. |
+| [AIRPORT-DESIGN.md](AIRPORT-DESIGN.md) | Full architecture |
 
-See [AIRPORT-DESIGN.md](AIRPORT-DESIGN.md) for the full architecture.
+## Environment variables
 
-## Commands
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `ISSUE_AGENT_ROOT` | `~/issue-agent` | Config and state directory |
+| `ISSUE_AGENT_AIDER` | `~/.local/venvs/aider/bin/aider` | Aider binary |
+| `ISSUE_AGENT_WORKSPACES` | `~/agent-workspaces` | Clone directory |
+| `ISSUE_AGENT_SECRETS` | `~/.config/cockpit/secrets.env` | Optional secrets file |
+| `OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama API |
+| `GH_TOKEN` | — | GitHub token (or use `gh auth login`) |
 
-```
-status  list  triage  fix  run  demo  watch  polish  boost  fleet
-collect  max  local  build  relentless  cleanup-ci-prs  ci-heal  ci-watch
-daemon  refresh  airport  worker  factory  upstream  upstream-bootstrap
-roam  solvability  failures
-```
+## Part of the local agent stack
 
-Run `issue_agent.py --help` or `issue_agent.py <cmd> --help` for details.
+Issue Agent is the fleet layer. Related projects by [Nueramarcos](https://github.com/Nueramarcos):
 
-## Secrets
-
-Never commit API keys. Load from `~/.config/cockpit/secrets.env` (mode 600) or export `GH_TOKEN` / `GITHUB_TOKEN` before running.
+- **[linux-cockpit](https://github.com/Nueramarcos/linux-cockpit)** — terminal + agent conventions
+- **[orion-ai-agent](https://github.com/Nueramarcos/orion-ai-agent)** — AST bug tracing
+- **[build-composer](https://github.com/Nueramarcos/build-composer)** — LangGraph multi-agent coder
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT

@@ -1,0 +1,12 @@
+# Starter fleet — one repo. Copy to repos.yaml and edit.
+repos:
+  - name: your-user/your-repo
+    branch: main
+    topics: [python, automation]
+    ci_workflows: [CI]
+    test_command: "python3 -m pytest -q"
+    wait_for_checks: false
+    park_minutes: 5
+    draft_pr: false
+    auto_merge: true
+    trigger_label: agent-triage

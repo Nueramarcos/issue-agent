@@ -26,11 +26,12 @@ except ImportError:
     yaml = None  # type: ignore
 
 HOME = Path.home()
-SECRETS = HOME / ".config/cockpit/secrets.env"
-AIDER = HOME / ".local/venvs/aider/bin/aider"
-WORKSPACES = HOME / "agent-workspaces"
-LOG_DIR = HOME / "issue-agent/logs"
-CONFIG_DEFAULTS = HOME / "issue-agent/config.default.toml"
+AGENT_ROOT = Path(os.environ.get("ISSUE_AGENT_ROOT", HOME / "issue-agent"))
+SECRETS = Path(os.environ.get("ISSUE_AGENT_SECRETS", HOME / ".config/cockpit/secrets.env"))
+AIDER = Path(os.environ.get("ISSUE_AGENT_AIDER", HOME / ".local/venvs/aider/bin/aider"))
+WORKSPACES = Path(os.environ.get("ISSUE_AGENT_WORKSPACES", HOME / "agent-workspaces"))
+LOG_DIR = AGENT_ROOT / "logs"
+CONFIG_DEFAULTS = AGENT_ROOT / "config.default.toml"
 
 SYSTEM_PROMPT = """You are a local autonomous coding agent fixing GitHub issues.
 
@@ -1398,29 +1399,29 @@ ISSUE_BACKLOG: dict[str, list[dict[str, str]]] = {
     ],
 }
 
-REPOS_CONFIG = HOME / "issue-agent/repos.yaml"
-BACKLOG_FILE = HOME / "issue-agent/backlog.yaml"
-COLLECTOR_STATE = HOME / "issue-agent/collector-state.json"
-LOCAL_QUEUE = HOME / "issue-agent/local-queue.json"
-CI_HEAL_STATE = HOME / "issue-agent/ci-heal-state.json"
-CI_HEAL_QUEUE = HOME / "issue-agent/ci-heal-queue.json"
-FLEET_STATE = HOME / "issue-agent/fleet-state.json"
-ACTIVITY_LOG = HOME / "issue-agent/activity.json"
-STATUS_DIGEST = HOME / "issue-agent/status.json"
-FAILURE_LEDGER = HOME / "issue-agent/failure-ledger.json"
-FAILURE_DIGEST = HOME / "issue-agent/failures.json"
-AIRPORT_CONFIG = HOME / "issue-agent/airport.yaml"
-UPSTREAM_CONFIG = HOME / "issue-agent/upstream.yaml"
-UPSTREAM_BACKLOG_FILE = HOME / "issue-agent/upstream-backlog.yaml"
-AIRPORT_STATUS = HOME / "issue-agent/airport-status.json"
+REPOS_CONFIG = AGENT_ROOT / "repos.yaml"
+BACKLOG_FILE = AGENT_ROOT / "backlog.yaml"
+COLLECTOR_STATE = AGENT_ROOT / "collector-state.json"
+LOCAL_QUEUE = AGENT_ROOT / "local-queue.json"
+CI_HEAL_STATE = AGENT_ROOT / "ci-heal-state.json"
+CI_HEAL_QUEUE = AGENT_ROOT / "ci-heal-queue.json"
+FLEET_STATE = AGENT_ROOT / "fleet-state.json"
+ACTIVITY_LOG = AGENT_ROOT / "activity.json"
+STATUS_DIGEST = AGENT_ROOT / "status.json"
+FAILURE_LEDGER = AGENT_ROOT / "failure-ledger.json"
+FAILURE_DIGEST = AGENT_ROOT / "failures.json"
+AIRPORT_CONFIG = AGENT_ROOT / "airport.yaml"
+UPSTREAM_CONFIG = AGENT_ROOT / "upstream.yaml"
+UPSTREAM_BACKLOG_FILE = AGENT_ROOT / "upstream-backlog.yaml"
+AIRPORT_STATUS = AGENT_ROOT / "airport-status.json"
 AIRPORT_PID_DIR = LOG_DIR / "airport-pids"
-SOLVABILITY_STATE = HOME / "issue-agent/solvability.json"
+SOLVABILITY_STATE = AGENT_ROOT / "solvability.json"
 
 _SOLV_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 SOLV_CACHE_TTL_SECS = 90
 
 MAX_FAILURE_ATTEMPTS = 2
-AIDER_SLOT_DIR = HOME / "issue-agent/aider-slots"
+AIDER_SLOT_DIR = AGENT_ROOT / "aider-slots"
 
 
 def failure_skip_hours() -> int:
