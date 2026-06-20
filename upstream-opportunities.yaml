@@ -84,6 +84,20 @@ opportunities:
     status: open
 
   - repo: tinygrad/tinygrad
+    number: 16686
+    title: "fix(clang): emulate bf16 as unsigned short on non-native targets"
+    url: https://github.com/tinygrad/tinygrad/pull/16686
+    score: 91
+    tier: 1
+    effort: s
+    impact: medium
+    tags: [tinygrad, pr-open, clang, good-first]
+    hardware_fit: [any]
+    why: "PR open for #6909 — fixes clang __bf16 soft-promote on older x86."
+    test_hint: DEV=CPU python3 -m unittest test.null.test_clang_bf16
+    status: pr-open
+
+  - repo: tinygrad/tinygrad
     number: 6909
     title: "If BF16 isn't supported, it should autocast to float"
     url: https://github.com/tinygrad/tinygrad/issues/6909
