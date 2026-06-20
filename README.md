@@ -20,6 +20,7 @@ Most coding agents are cloud-only. Issue Agent runs on **your** machine, uses **
 | Capability | Command |
 |------------|---------|
 | Health check | `issue-agent status` |
+| Fast health check | `issue-agent status --quick` |
 | Fix one issue | `issue-agent fix --repo owner/repo --issue N` |
 | Fix all `agent-triage` | `issue-agent run --repo owner/repo` |
 | Rotate fleet | `issue-agent fleet` |
@@ -68,7 +69,8 @@ issue-agent status
 ## Demo (no GitHub needed)
 
 ```bash
-issue-agent demo --repo Nueramarcos/orion-ai-agent --dry-run
+issue-agent demo --dry-run
+issue-agent demo --repo Nueramarcos/issue-agent
 ```
 
 ## Docs
@@ -97,6 +99,15 @@ Issue Agent is the fleet layer. Related projects by [Nueramarcos](https://github
 - **[linux-cockpit](https://github.com/Nueramarcos/linux-cockpit)** — terminal + agent conventions
 - **[orion-ai-agent](https://github.com/Nueramarcos/orion-ai-agent)** — AST bug tracing
 - **[build-composer](https://github.com/Nueramarcos/build-composer)** — LangGraph multi-agent coder
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| `status` takes 30–60s | Use `issue-agent status --quick` (skips fleet gh scans) |
+| Demo: "task already satisfied" | Main already has the fix — expected, exit 0 |
+| Demo: "no commits" | Aider made no diff; try a different repo or issue |
+| `gh` check fails | Run `gh auth login` |
 
 ## License
 

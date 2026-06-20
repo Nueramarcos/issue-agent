@@ -10,7 +10,9 @@ issue-agent status
 issue-agent list --repo your-user/your-repo --limit 5
 
 # 3. Dry-run (no PR)
-issue-agent demo --repo Nueramarcos/orion-ai-agent --dry-run
+issue-agent status --quick
+issue-agent demo --dry-run
+issue-agent demo --repo Nueramarcos/issue-agent
 
 # 4. Real fix
 issue-agent fix --repo your-user/your-repo --issue 1

@@ -70,7 +70,8 @@ cat <<EOF
   export ISSUE_AGENT_AIDER="$VENV_DIR/bin/aider"
 
   issue-agent status          # verify gh + ollama + aider
-  issue-agent demo --repo Nueramarcos/orion-ai-agent --dry-run
+  issue-agent status --quick
+  issue-agent demo --dry-run
 
   Docs: $INSTALL_DIR/docs/QUICKSTART.md
 

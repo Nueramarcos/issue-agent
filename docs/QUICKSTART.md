@@ -81,7 +81,8 @@ What happens:
 Dry-run without GitHub:
 
 ```bash
-issue-agent demo --repo Nueramarcos/orion-ai-agent --dry-run
+issue-agent demo --dry-run
+issue-agent demo --repo Nueramarcos/issue-agent
 ```
 
 ## 5. Run the fleet (Airport)

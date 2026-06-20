@@ -1102,12 +1102,13 @@ def cmd_solvability(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_status(_: argparse.Namespace) -> int:
+def cmd_status(args: argparse.Namespace) -> int:
     checks: list[tuple[str, bool, str]] = []
+    quick = getattr(args, "quick", False)
 
     print("Issue Agent — status among change\n")
     load_secrets()
-    hk = housekeeping()
+    hk = housekeeping() if not quick else {"unparked": 0, "queue_pruned": 0, "ci_closed": 0}
 
     try:
         run(["gh", "auth", "status"], check=False)
@@ -1133,8 +1134,13 @@ def cmd_status(_: argparse.Namespace) -> int:
     print(f"  [ok] workspaces: {WORKSPACES}")
     print(f"  [ok] logs: {LOG_DIR}")
 
-    if any(hk.values()):
+    if not quick and any(hk.values()):
         print(f"\n  housekeeping: unparked={hk['unparked']} queue_pruned={hk['queue_pruned']} ci_closed={hk['ci_closed']}")
+
+    if quick:
+        print("\n  (quick mode — skipping fleet/solvability gh scans)")
+        print(f"\n  digest: {STATUS_DIGEST}")
+        return 0 if all(c[1] for c in checks) else 1
 
     try:
         ranked = save_solvability_snapshot()
@@ -1352,6 +1358,22 @@ Add a **Usage** section to README.md with:
 
 ## Acceptance criteria
 - README.md only
+""",
+    },
+    "Nueramarcos/issue-agent": {
+        "title": "Add Troubleshooting section to README",
+        "body": """## Problem
+README lacks troubleshooting for common operator issues.
+
+## Expected
+Add a **Troubleshooting** section to README.md with:
+1. Use `issue-agent status --quick` when full status is slow (skips fleet gh scans)
+2. Demo may report "task already satisfied" when main already contains the fix
+3. Auth: run `gh auth login` if gh check fails
+
+## Acceptance criteria
+- README.md only
+- Keep existing sections intact
 """,
     },
 }
@@ -3843,8 +3865,17 @@ def resolve_issue_local(
             run(["git", "add", "-A"], cwd=ws, check=False)
             run(["git", "commit", "-m", f"chore: sanitize artifacts for {title[:50]}"], cwd=ws, check=False)
 
+    dirty = run(["git", "status", "--porcelain"], cwd=ws, check=False)
+    if dirty.stdout and dirty.stdout.strip():
+        run(["git", "add", "-A"], cwd=ws, check=False)
+        run(["git", "commit", "-m", title[:72]], cwd=ws, check=False)
+
     base = default_branch(repo)
     if not has_branch_changes(ws, base):
+        diff_main = run(["git", "diff", f"origin/{base}"], cwd=ws, check=False)
+        if not (diff_main.stdout or "").strip():
+            log(f"task already satisfied on {repo} (matches origin/{base})")
+            return 0
         log(f"no commits for local task on {repo} — skipping PR")
         record_failure(repo, "local", title[:80], "no commits for local task")
         return 1
@@ -3889,7 +3920,7 @@ def resolve_issue_local(
 
 def cmd_demo(args: argparse.Namespace) -> int:
     load_secrets()
-    repo = args.repo_opt or args.repo or "Nueramarcos/orion-ai-agent"
+    repo = args.repo_opt or args.repo or "Nueramarcos/issue-agent"
     spec = DEMO_ISSUES.get(repo)
     if not spec:
         known = ", ".join(DEMO_ISSUES)
@@ -3950,6 +3981,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("status", help="Check gh, ollama, aider")
+    s.add_argument("--quick", "-q", action="store_true", help="Health checks only — skip fleet gh scans")
     s.set_defaults(func=cmd_status)
 
     s = sub.add_parser("list", help="List open issues")
@@ -3976,7 +4008,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_run)
 
     s = sub.add_parser("demo", help="Run a built-in test issue (no GitHub issue API)")
-    s.add_argument("repo", nargs="?", default=None, help="owner/repo (default: Nueramarcos/orion-ai-agent)")
+    s.add_argument("repo", nargs="?", default=None, help="owner/repo (default: Nueramarcos/issue-agent)")
     s.add_argument("--repo", "-R", dest="repo_opt", default=None, help="owner/repo (same as positional)")
     s.add_argument("--dry-run", action="store_true")
     s.set_defaults(func=cmd_demo)
