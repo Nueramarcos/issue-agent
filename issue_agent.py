@@ -3889,12 +3889,13 @@ def resolve_issue_local(
 
 def cmd_demo(args: argparse.Namespace) -> int:
     load_secrets()
-    spec = DEMO_ISSUES.get(args.repo)
+    repo = args.repo_opt or args.repo or "Nueramarcos/orion-ai-agent"
+    spec = DEMO_ISSUES.get(repo)
     if not spec:
         known = ", ".join(DEMO_ISSUES)
-        raise SystemExit(f"No demo issue for {args.repo}. Known: {known}")
+        raise SystemExit(f"No demo issue for {repo}. Known: {known}")
     return resolve_issue_local(
-        args.repo,
+        repo,
         title=spec["title"],
         body=spec["body"],
         dry_run=args.dry_run,
@@ -3975,7 +3976,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_run)
 
     s = sub.add_parser("demo", help="Run a built-in test issue (no GitHub issue API)")
-    s.add_argument("repo", nargs="?", default="Nueramarcos/orion-ai-agent")
+    s.add_argument("repo", nargs="?", default=None, help="owner/repo (default: Nueramarcos/orion-ai-agent)")
+    s.add_argument("--repo", "-R", dest="repo_opt", default=None, help="owner/repo (same as positional)")
     s.add_argument("--dry-run", action="store_true")
     s.set_defaults(func=cmd_demo)
 
