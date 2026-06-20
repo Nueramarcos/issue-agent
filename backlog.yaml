@@ -1,0 +1,192 @@
+# Issue collector backlog — agent-triage issues for local model to fix.
+# Run: issue-agent collect   then: issue-agent boost
+
+repos:
+  Nueramarcos/orion-ai-agent:
+    - title: Add CONTRIBUTING.md with dev setup steps
+      body: |
+        Create CONTRIBUTING.md with: clone, venv setup, pip install -e .,
+        and python -m pytest -q. Max 20 lines. One file only.
+      labels: [agent-triage, documentation, good first issue]
+    - title: Add LICENSE file if missing
+      body: |
+        Ensure LICENSE exists with MIT license text and current year.
+        LICENSE file only.
+      labels: [agent-triage, documentation]
+    - title: Add pytest smoke test for ast_parser
+      body: |
+        Add tests/test_ast_parser.py with smoke tests for parse_file and parse_source
+        using a small inline Python snippet. Add pytest to a requirements-dev.txt.
+        Tests must pass with python -m pytest -q.
+      labels: [agent-triage, enhancement, good first issue]
+    - title: Add GitHub Actions CI workflow
+      body: |
+        Add .github/workflows/ci.yml running python -m pytest -q on ubuntu-latest
+        with Python 3.12. Trigger on push and pull_request to main.
+      labels: [agent-triage, enhancement]
+    - title: Add README badges and project shields
+      body: |
+        Add badges to README.md top: License MIT, Python 3.10+, and a CI badge
+        placeholder. Keep existing content. README.md only.
+      labels: [agent-triage, documentation]
+
+  Nueramarcos/forge-ci-reliability:
+    - title: Add CONTRIBUTING.md with forge dev workflow
+      body: |
+        Create CONTRIBUTING.md: venv, pip install -r requirements-dev.txt, pytest -q.
+        Max 18 lines. One file only.
+      labels: [agent-triage, documentation, good first issue]
+    - title: Add forge package __init__ exports
+      body: |
+        Ensure forge/__init__.py exports main and __version__ from forge.cli.
+        Minimal change to __init__.py only.
+      labels: [agent-triage, enhancement, good first issue]
+    - title: Add README usage examples for forge CLI
+      body: |
+        Add a ## Usage section to README.md with forge build/run/clean examples.
+        README.md only, max 15 lines.
+      labels: [agent-triage, documentation]
+    - title: Add .gitignore entries for Python artifacts
+      body: |
+        Add __pycache__/, .pytest_cache/, *.pyc, .venv/ to .gitignore if missing.
+        .gitignore only.
+      labels: [agent-triage, enhancement, good first issue]
+    - title: Remove accidental junk files from repo root
+      body: |
+        Delete these accidental agent artifacts from repo root if they exist:
+        - python forge
+        - python forge/cli.py build <project_path>
+        - python forge/cli.py run <project_path>
+        - python forge/cli.py clean <project_path>
+        Only delete junk files. Do not change forge/cli.py logic.
+      labels: [agent-triage, bug]
+    - title: Add pytest smoke test for forge CLI
+      body: |
+        Add tests/test_cli.py that imports forge.cli and checks build_parser exists.
+        Add requirements-dev.txt with pytest. Must pass python -m pytest -q.
+      labels: [agent-triage, enhancement, good first issue]
+    - title: Add GitHub Actions CI for forge
+      body: |
+        Add .github/workflows/ci.yml: Python 3.12, pip install pytest, run pytest -q.
+      labels: [agent-triage, enhancement]
+
+  Nueramarcos/nexus-vision-engine:
+    - title: Add .gitignore for Python build artifacts
+      body: |
+        Add __pycache__/, .pytest_cache/, *.pyc, dist/, *.egg-info/ to .gitignore if missing.
+        .gitignore only.
+      labels: [agent-triage, enhancement, good first issue]
+    - title: Add CONTRIBUTING.md with install and test
+      body: |
+        Create CONTRIBUTING.md: pip install -e ., pytest -q, branch naming.
+        Max 18 lines. One file only.
+      labels: [agent-triage, documentation]
+    - title: Add nexus package __init__ docstring
+      body: |
+        Add module docstring to nexus/__init__.py describing the vision pipeline package.
+        Single file only.
+      labels: [agent-triage, documentation, good first issue]
+    - title: Expand README with install and test instructions
+      body: |
+        Add ## Install and ## Test sections to README.md (pip install -e ., pytest -q).
+        README.md only.
+      labels: [agent-triage, documentation]
+    - title: Add pyproject.toml project metadata
+      body: |
+        Ensure pyproject.toml has name, version, description, and requires-python >=3.10.
+        pyproject.toml only.
+      labels: [agent-triage, enhancement]
+    - title: Remove accidental junk files from repo root
+      body: |
+        Delete accidental files if present: path, path/to, path/to/filename.js,
+        python nexus, python nexus/pipeline.py. Do not modify nexus/pipeline.py.
+      labels: [agent-triage, bug]
+    - title: Add pytest smoke test for pipeline
+      body: |
+        Add tests/test_pipeline_import.py verifying nexus.pipeline imports.
+        Add requirements-dev.txt with pytest. Pass python -m pytest -q.
+      labels: [agent-triage, enhancement, good first issue]
+    - title: Add GitHub Actions CI for nexus
+      body: |
+        Add .github/workflows/ci.yml running pytest on Python 3.12.
+      labels: [agent-triage, enhancement]
+
+  Nueramarcos/vertex-sim-core:
+    - title: Add .gitignore for Rust target dir
+      body: |
+        Ensure .gitignore includes /target/ and Cargo.lock if missing.
+        .gitignore only.
+      labels: [agent-triage, enhancement, good first issue]
+    - title: Add CONTRIBUTING.md for cargo workflow
+      body: |
+        Create CONTRIBUTING.md: cargo test, cargo fmt, branch workflow.
+        Max 15 lines. One file only.
+      labels: [agent-triage, documentation]
+    - title: Add lib.rs unit test for SimConfig default
+      body: |
+        Add a #[test] in Vertex/lib.rs verifying SimConfig::default() max_ticks and time_step.
+        Vertex/lib.rs only.
+      labels: [agent-triage, enhancement, good first issue]
+    - title: Add README quick start for cargo test
+      body: |
+        Add ## Quick start to README.md: cargo test, project purpose in 3 lines.
+        README.md only.
+      labels: [agent-triage, documentation]
+    - title: Add README badges for Rust crate
+      body: |
+        Add badges to README.md: MIT license, Rust, CI placeholder. README only.
+      labels: [agent-triage, documentation]
+    - title: Add GitHub Actions CI for cargo test
+      body: |
+        Add .github/workflows/ci.yml: rust toolchain stable, run cargo test.
+      labels: [agent-triage, enhancement]
+    - title: Add issue and PR templates
+      body: |
+        Add .github/ISSUE_TEMPLATE/bug_report.md and
+        .github/pull_request_template.md with minimal sensible defaults.
+      labels: [agent-triage, documentation, good first issue]
+
+  # tinygrad fork (local_fix — no GitHub issues API)
+  Nueramarcos/tinygrad:
+    - title: Add FORK.md documenting Nueramarcos fork
+      body: |
+        Create FORK.md explaining this is the Nueramarcos fork of tinygrad.
+        Include: upstream link, how to clone, how to run a quick smoke test
+        (python3 -c "from tinygrad import Device; print(Device.DEFAULT)"), and note that
+        experimental AMD/RDNA work may live on branches. One new file only.
+      labels: [agent-triage, documentation]
+    - title: Add fork banner to README
+      body: |
+        Add a short ## Fork Notice section at the top of README.md after the title.
+        State maintained by Nueramarcos, link to FORK.md if it exists or will exist.
+        README.md only. Max 8 lines.
+      labels: [agent-triage, documentation]
+    - title: Add lightweight fork CI workflow
+      body: |
+        Add .github/workflows/fork-smoke.yml: ubuntu-latest, Python 3.12,
+        pip install -e ., run python3 -c "from tinygrad import Device; print(Device.DEFAULT)".
+        Trigger on push to master and pull_request. Single workflow file only.
+      labels: [agent-triage, enhancement]
+
+  # vision (torchvision) fork (local_fix)
+  Nueramarcos/vision:
+    - title: Add .gitignore entries for torch build artifacts
+      body: |
+        Add __pycache__/, .pytest_cache/, build/, dist/ to .gitignore if missing.
+        .gitignore only.
+      labels: [agent-triage, enhancement]
+    - title: Add FORK.md for Nueramarcos vision fork
+      body: |
+        Create FORK.md: this is a personal fork of pytorch/vision, upstream link,
+        install note (pip install -e .), minimal scope. One file only.
+      labels: [agent-triage, documentation]
+    - title: Add fork notice to README
+      body: |
+        Add ## Fork Notice at top of README.md (max 6 lines). Nueramarcos maintained fork.
+        README.md only.
+      labels: [agent-triage, documentation]
+    - title: Add fork smoke CI workflow
+      body: |
+        Add .github/workflows/fork-smoke.yml: Python 3.12, pip install -e .,
+        python -c "import torchvision; print(torchvision.__version__)". One file only.
+      labels: [agent-triage, enhancement]

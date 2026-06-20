@@ -1,0 +1,12 @@
+#!/usr/bin/env zsh
+# Full fleet refresh — upstream bootstrap, factory, heal, airport restart
+source "$HOME/.config/cockpit/secrets.env" 2>/dev/null
+export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.cargo/bin:$PATH"
+export OLLAMA_HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
+export ISSUE_AGENT_AIRPORT=1
+PYTHON="$HOME/.local/venvs/aider/bin/python"
+AGENT="$HOME/issue-agent/issue_agent.py"
+
+echo "=== issue-agent refresh $(date -u) ==="
+"$PYTHON" "$AGENT" refresh || exit $?
+exec /home/marcos/bin/issue-agent-airport-restart

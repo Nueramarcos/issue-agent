@@ -1,0 +1,86 @@
+repos:
+  - name: Nueramarcos/orion-ai-agent
+    branch: main
+    topics: [python, ast, code-analysis, automation, ai-agent]
+    ci_workflows: [CI]
+    wait_for_checks: false
+    park_minutes: 3
+
+  - name: Nueramarcos/forge-ci-reliability
+    branch: main
+    topics: [python, ci-cd, build-tools, devops, testing]
+    ci_workflows: [CI]
+    test_command: "python3 -m pip install -q -r requirements-dev.txt && python3 -m pytest -q"
+    wait_for_checks: false
+    park_minutes: 3
+
+  - name: Nueramarcos/nexus-vision-engine
+    branch: main
+    topics: [python, computer-vision, face-recognition, pipeline, machine-learning]
+    ci_workflows: [CI]
+    test_command: "python3 -m pip install -e . -q && python3 -m pytest -q"
+    wait_for_checks: false
+    park_minutes: 3
+
+  - name: Nueramarcos/vertex-sim-core
+    branch: main
+    topics: [rust, simulation, godot, gamedev, physics]
+    ci_workflows: [CI]
+    test_command: "cargo test"
+    wait_for_checks: false
+    park_minutes: 3
+
+  - name: Nueramarcos/tinygrad
+    branch: master
+    local_fix: true
+    ci_heal: false
+    park_minutes: 15
+    topics: [machine-learning, deep-learning, python, gpu, tinygrad]
+    ci_workflows: [Fork Smoke Test]
+    test_command: "python3 -m pip install -e . -q && python3 -c \"from tinygrad import Device; print(Device.DEFAULT)\""
+    wait_for_checks: false
+    check_timeout_secs: 420
+
+  - name: Nueramarcos/vision
+    branch: main
+    local_fix: true
+    park_minutes: 3
+    topics: [python, computer-vision, pytorch, deep-learning, torchvision]
+    ci_workflows: [Fork Smoke Test]
+    test_command: "python3 -m pip install -e . -q && python3 -c \"import torchvision; print(torchvision.__version__)\""
+    wait_for_checks: false
+    check_timeout_secs: 600
+
+  # ML upstream forks (tier 1 — agent-friendly)
+  - name: Nueramarcos/micrograd
+    branch: master
+    local_fix: true
+    topics: [machine-learning, autograd, education, python, neural-networks]
+    ci_workflows: [CI, Fork Smoke Test]
+    test_command: >-
+      python3 -c "import sys; sys.path.insert(0,'.'); from micrograd.engine import Value; print(Value(1.0).data)"
+    wait_for_checks: false
+    park_minutes: 5
+
+  - name: Nueramarcos/mlx
+    branch: main
+    local_fix: true
+    ci_heal: false
+    park_minutes: 10
+    topics: [machine-learning, apple-silicon, mlx, python, array-computing]
+    ci_workflows: [Fork Smoke Test]
+    test_command: python3 -c "import pathlib; assert pathlib.Path('mlx').is_dir()"
+    wait_for_checks: false
+    check_timeout_secs: 420
+
+  # ML upstream forks (tier 2 — validate-first)
+  - name: Nueramarcos/llama.cpp
+    branch: master
+    local_fix: true
+    ci_heal: false
+    park_minutes: 15
+    topics: [llm, inference, cpp, ggml, machine-learning]
+    ci_workflows: [Fork Smoke Test]
+    test_command: test -f CMakeLists.txt && test -f ggml/CMakeLists.txt
+    wait_for_checks: false
+    check_timeout_secs: 600

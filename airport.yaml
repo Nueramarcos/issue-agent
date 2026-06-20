@@ -1,0 +1,46 @@
+# Airport — forge/nexus/vertex/orion focus (local forks deprioritized)
+enabled: true
+park_minutes: 1
+local_first: true
+wait_for_checks: false
+factory_interval_secs: 300
+ci_heal_interval_secs: 300
+factory_max_per_repo: 3
+ci_heal_max: 3
+failure_skip_hours: 2
+max_concurrent_aider: 2
+
+lanes:
+  - repo: Nueramarcos/forge-ci-reliability
+    kind: github
+    interval: 150
+    collect_max: 3
+    fix_max: 2
+
+  - repo: Nueramarcos/nexus-vision-engine
+    kind: github
+    interval: 150
+    collect_max: 3
+    fix_max: 2
+
+  - repo: Nueramarcos/vertex-sim-core
+    kind: github
+    interval: 180
+    collect_max: 3
+    fix_max: 2
+
+  - repo: Nueramarcos/orion-ai-agent
+    kind: github
+    interval: 240
+    collect_max: 3
+    fix_max: 2
+
+  # vision / micrograd / mlx paused — 7B no_commits burn; re-enable when gh auth + repairs stable
+  # tinygrad paused — GH Actions queue stall
+
+  - kind: roam
+    interval: 150
+    collect_max: 3
+    fix_max: 2
+
+# Upstream validate lanes in upstream.yaml (forge, micrograd, mlx, llama-cpp)

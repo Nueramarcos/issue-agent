@@ -1,0 +1,7 @@
+#!/usr/bin/env zsh
+# Interactive Issue Agent menu
+source "$HOME/.config/cockpit/secrets.env" 2>/dev/null
+export PATH="$HOME/.local/bin:$HOME/bin:$PATH"
+export OLLAMA_HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
+export ISSUE_AGENT_REPO="${ISSUE_AGENT_REPO:-Nueramarcos/orion-ai-agent}"
+exec "$HOME/.local/venvs/aider/bin/python" "$HOME/issue-agent/tui.py"

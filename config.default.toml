@@ -1,0 +1,12 @@
+# Issue Agent defaults — override per repo with .issue-agent.yml
+
+model = "ollama/qwen2.5-coder:7b"
+triage_model = "qwen2.5-coder:1.5b"
+max_issues_per_run = 3
+max_aider_rounds = 3
+draft_pr = true
+workspace_root = "~/agent-workspaces"
+log_dir = "~/issue-agent/logs"
+poll_interval_secs = 1800
+trigger_label = "agent-triage"
+skip_labels = ["wontfix", "question", "help wanted", "architecture", "agent-skip"]

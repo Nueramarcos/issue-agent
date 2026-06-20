@@ -1,0 +1,5 @@
+#!/usr/bin/env zsh
+# Fork + clone upstream OSS repos from upstream.yaml
+source "$HOME/.config/cockpit/secrets.env" 2>/dev/null
+export PATH="$HOME/.local/bin:$HOME/bin:$PATH"
+exec "$HOME/.local/venvs/aider/bin/python" "$HOME/issue-agent/issue_agent.py" upstream-bootstrap "$@"

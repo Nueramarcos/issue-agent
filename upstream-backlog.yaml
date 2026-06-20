@@ -1,0 +1,66 @@
+# Backlog seeds for ML upstream forks (merged into collector backlog).
+repos:
+  Nueramarcos/micrograd:
+    - title: Add CONTRIBUTING.md with micrograd dev workflow
+      body: |
+        Create CONTRIBUTING.md: clone repo, python3 -c import smoke for Value,
+        and note that micrograd is a minimal autograd teaching library.
+        Max 18 lines. One file only.
+      labels: [agent-triage, documentation, good first issue]
+    - title: Add pytest smoke test for Value forward pass
+      body: |
+        Add tests/test_value.py with one test: Value(2.0) + Value(3.0) == 5.0.
+        Add requirements-dev.txt with pytest. Must pass python3 -m pytest -q.
+      labels: [agent-triage, enhancement, good first issue]
+    - title: Add .gitignore for Python artifacts
+      body: |
+        Add __pycache__/, .pytest_cache/, *.pyc, .venv/ to .gitignore if missing.
+        .gitignore only.
+      labels: [agent-triage, enhancement, good first issue]
+    - title: Add README badge row
+      body: |
+        Add a badges line under the README title: Python 3.10+, MIT license.
+        README.md only. Max 3 lines added.
+      labels: [agent-triage, documentation]
+    - title: Add FORK.md for Nueramarcos micrograd fork
+      body: |
+        Create FORK.md: personal fork of karpathy/micrograd, upstream link,
+        quick smoke test command, and note about educational ports/experiments.
+        One file only.
+      labels: [agent-triage, documentation]
+
+  Nueramarcos/mlx:
+    - title: Add FORK.md for Nueramarcos MLX exploration fork
+      body: |
+        Create FORK.md: fork of ml-explore/mlx, upstream link, note that primary
+        target is Apple Silicon and this fork tracks Linux-side experiments.
+        One file only.
+      labels: [agent-triage, documentation]
+    - title: Add fork notice to README
+      body: |
+        Add ## Fork Notice (max 6 lines) after README title. Nueramarcos maintained fork.
+        README.md only.
+      labels: [agent-triage, documentation]
+    - title: Add lightweight fork smoke workflow
+      body: |
+        Add .github/workflows/fork-smoke.yml: ubuntu-latest, checkout only,
+        run python3 -c "import pathlib; assert pathlib.Path('mlx').is_dir()".
+        One workflow file only.
+      labels: [agent-triage, enhancement]
+    - title: Add .gitignore entries for Python build artifacts
+      body: |
+        Add __pycache__/, .pytest_cache/, build/, dist/ to .gitignore if missing.
+        .gitignore only.
+      labels: [agent-triage, enhancement, good first issue]
+
+  Nueramarcos/llama.cpp:
+    - title: Add FORK.md for Nueramarcos llama.cpp fork
+      body: |
+        Create FORK.md: fork of ggml-org/llama.cpp, upstream link, cmake build hint,
+        and scope (local validate/smoke only). One file only.
+      labels: [agent-triage, documentation]
+    - title: Add fork validate workflow
+      body: |
+        Add .github/workflows/fork-validate.yml: ubuntu-latest, verify CMakeLists.txt
+        and ggml/CMakeLists.txt exist, run cmake --version. One file only.
+      labels: [agent-triage, enhancement]

@@ -1,0 +1,23 @@
+# Runtime state
+logs/
+aider-slots/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local operator state (machine-specific)
+activity.json
+airport-status.json
+collector-state.json
+ci-heal-state.json
+ci-heal-queue.json
+failure-ledger.json
+failures.json
+fleet-state.json
+local-queue.json
+solvability.json
+status.json
+
+# Secrets
+.env
+secrets.env

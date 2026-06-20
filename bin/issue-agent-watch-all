@@ -1,0 +1,12 @@
+#!/usr/bin/env zsh
+# Watch full 6-repo fleet — continuous iteration (status among change)
+source "$HOME/.config/cockpit/secrets.env" 2>/dev/null
+export PATH="$HOME/.local/bin:$HOME/bin:$PATH"
+export OLLAMA_HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
+export OLLAMA_API_BASE="${OLLAMA_API_BASE:-$OLLAMA_HOST}"
+
+INTERVAL="${ISSUE_AGENT_INTERVAL:-3600}"
+CI_MAX="${ISSUE_AGENT_CI_MAX:-2}"
+
+echo "Issue Agent daemon — full fleet, every ${INTERVAL}s (Ctrl+C to stop)"
+exec issue-agent-daemon --interval "$INTERVAL" --ci-max "$CI_MAX" "$@"

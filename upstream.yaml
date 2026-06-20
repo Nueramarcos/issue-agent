@@ -1,0 +1,107 @@
+# Upstream OSS catalog — validate clones, optional PR lanes.
+# Bootstrap: issue-agent upstream-bootstrap [--tier 1] [--slug micrograd]
+# Workers: airport spawns one lane per enabled project below.
+
+workspace_root: ~/upstream-workspaces
+
+projects:
+  # --- Tier 1: agent-friendly (enable first) ---
+  - slug: forge
+    upstream: 0xReLogic/Forge
+    path: ~/Forge
+    test_command: cargo test --quiet
+    fork: ""
+    branch: fix/parallel-fail-fast-cleanup
+    enabled: true
+    tier: 1
+    mode: pr
+    interval: 900
+    pr_title: "fix(runner): abort parallel siblings on step failure"
+    pr_body: |
+      Parallel fail-fast left sibling tokio tasks running, orphaning containers.
+      This change aborts siblings and always runs cleanup after parallel steps.
+
+      ---
+      *Airport upstream lane · Nueramarcos*
+
+  - slug: micrograd
+    upstream: karpathy/micrograd
+    path: ~/upstream-workspaces/micrograd
+    test_command: >-
+      python3 -c "import sys; sys.path.insert(0,'.'); from micrograd.engine import Value; assert Value(3.0).data == 3.0"
+    fork: Nueramarcos/micrograd
+    branch: ""
+    enabled: true
+    tier: 1
+    mode: validate
+    interval: 1200
+
+  - slug: mlx
+    upstream: ml-explore/mlx
+    path: ~/upstream-workspaces/mlx
+    # MLX targets Apple Silicon; on Linux we only structure-check the tree.
+    test_command: python3 -c "import mlx.core as mx; print(mx.array([1]).item())"
+    test_command_linux: python3 -c "import pathlib; assert pathlib.Path('mlx').is_dir(), 'mlx package missing'"
+    fork: Nueramarcos/mlx
+    branch: ""
+    enabled: true
+    tier: 1
+    mode: validate
+    interval: 1800
+
+  # --- Tier 2: build/validate smoke ---
+  - slug: llama-cpp
+    upstream: ggml-org/llama.cpp
+    path: ~/upstream-workspaces/llama.cpp
+    test_command: test -f CMakeLists.txt && test -f ggml/CMakeLists.txt && cmake --version >/dev/null
+    fork: Nueramarcos/llama.cpp
+    branch: ""
+    enabled: true
+    tier: 2
+    mode: validate
+    interval: 2400
+
+  # --- Tier 3: catalog / paused until deterministic repairs improve ---
+  - slug: triton
+    upstream: triton-lang/triton
+    path: ~/upstream-workspaces/triton
+    test_command: test -f setup.py && python3 -c "import pathlib; assert pathlib.Path('python/triton').exists()"
+    fork: Nueramarcos/triton
+    branch: ""
+    enabled: false
+    tier: 3
+    mode: catalog
+    interval: 3600
+
+  - slug: vllm
+    upstream: vllm-project/vllm
+    path: ~/upstream-workspaces/vllm
+    test_command: test -f setup.py && python3 -c "import pathlib; assert pathlib.Path('vllm').exists()"
+    fork: Nueramarcos/vllm
+    branch: ""
+    enabled: false
+    tier: 3
+    mode: catalog
+    interval: 3600
+
+  - slug: iree
+    upstream: iree-org/iree
+    path: ~/upstream-workspaces/iree
+    test_command: test -f CMakeLists.txt && test -d compiler
+    fork: Nueramarcos/iree
+    branch: ""
+    enabled: false
+    tier: 3
+    mode: catalog
+    interval: 3600
+
+  - slug: tvm
+    upstream: apache/tvm
+    path: ~/upstream-workspaces/tvm
+    test_command: test -f CMakeLists.txt && test -d python/tvm
+    fork: Nueramarcos/tvm
+    branch: ""
+    enabled: false
+    tier: 3
+    mode: catalog
+    interval: 3600

@@ -1,0 +1,30 @@
+#!/usr/bin/env zsh
+# Stop daemon + airport workers, start airport supervisor
+source "$HOME/.config/cockpit/secrets.env" 2>/dev/null
+export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.cargo/bin:$PATH"
+AGENT="$HOME/issue-agent/issue_agent.py"
+
+issue_agent_pids() {
+  ps -eo pid=,args= | awk -v agent="$AGENT" '
+    $0 ~ agent && $0 !~ /ci-watch/ && $0 !~ /awk/ { print $1 }
+  '
+}
+
+pids=($(issue_agent_pids))
+if [[ ${#pids[@]} -gt 0 ]]; then
+  echo "stopping issue-agent → ${pids[*]}"
+  kill ${pids[@]} 2>/dev/null || true
+fi
+sleep 2
+pids=($(issue_agent_pids))
+if [[ ${#pids[@]} -gt 0 ]]; then
+  echo "force-stop issue-agent → ${pids[*]}"
+  kill -9 ${pids[@]} 2>/dev/null || true
+fi
+sleep 1
+rm -f "$HOME/issue-agent/logs/airport-pids/"*.pid 2>/dev/null
+
+# Detach from shell — airport must survive agent/cron restarts (no exec)
+nohup /home/marcos/bin/issue-agent-airport "$@" </dev/null &
+disown
+echo "airport supervisor detached pid=$! (log: ~/issue-agent/logs/airport.log)"

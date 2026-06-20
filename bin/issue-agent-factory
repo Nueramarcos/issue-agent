@@ -1,0 +1,9 @@
+#!/usr/bin/env zsh
+# Issue factory — seed discover + backlog issues
+source "$HOME/.config/cockpit/secrets.env" 2>/dev/null
+export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.cargo/bin:$PATH"
+export OLLAMA_HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
+export OLLAMA_NUM_PARALLEL="${OLLAMA_NUM_PARALLEL:-2}"
+export OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-24h}"
+export ISSUE_AGENT_AIRPORT=1
+exec "$HOME/.local/venvs/aider/bin/python" "$HOME/issue-agent/issue_agent.py" factory "$@"

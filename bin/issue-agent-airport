@@ -1,0 +1,15 @@
+#!/usr/bin/env zsh
+# Airport supervisor — parallel workers, issue factory, upstream lane
+source "$HOME/.config/cockpit/secrets.env" 2>/dev/null
+export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.cargo/bin:$PATH"
+export OLLAMA_HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
+export OLLAMA_NUM_PARALLEL="${OLLAMA_NUM_PARALLEL:-2}"
+export OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-24h}"
+export ISSUE_AGENT_AIRPORT=1
+LOG="$HOME/issue-agent/logs/airport.log"
+mkdir -p "$(dirname "$LOG")" "$HOME/issue-agent/logs/airport-pids"
+SUP_PID="$HOME/issue-agent/logs/airport-supervisor.pid"
+exec >>"$LOG" 2>&1
+echo "=== airport $(date -u) pid=$$ ==="
+print -r $$ >"$SUP_PID"
+exec "$HOME/.local/venvs/aider/bin/python" "$HOME/issue-agent/issue_agent.py" airport "$@"

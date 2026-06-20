@@ -1,0 +1,15 @@
+#!/usr/bin/env zsh
+# Start detached airport only if supervisor is not already running.
+source "$HOME/.config/cockpit/secrets.env" 2>/dev/null
+export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.cargo/bin:$PATH"
+SUP_PID="$HOME/issue-agent/logs/airport-supervisor.pid"
+
+if [[ -f "$SUP_PID" ]] && kill -0 "$(cat "$SUP_PID" 2>/dev/null)" 2>/dev/null; then
+  echo "airport already running pid=$(cat "$SUP_PID")"
+  exit 0
+fi
+
+mkdir -p "$(dirname "$SUP_PID")"
+nohup /home/marcos/bin/issue-agent-airport "$@" </dev/null &
+disown
+echo "airport supervisor detached pid=$! (log: ~/issue-agent/logs/airport.log)"

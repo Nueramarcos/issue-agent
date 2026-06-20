@@ -1,0 +1,13 @@
+#!/usr/bin/env zsh
+# Safe daemon restart — avoids pkill matching its own shell
+source "$HOME/.config/cockpit/secrets.env" 2>/dev/null
+export PATH="$HOME/.local/bin:$HOME/bin:$PATH"
+
+pids=$(pgrep -f '/home/marcos/issue-agent/issue_agent.py daemon' 2>/dev/null || true)
+if [[ -n "$pids" ]]; then
+  echo "stopping daemon pids: $pids"
+  kill $pids 2>/dev/null || true
+  sleep 2
+fi
+
+exec /home/marcos/bin/issue-agent-daemon "$@"

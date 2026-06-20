@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Open Issue Agent UI in a new terminal window
+exec gnome-terminal \
+  --title="Issue Agent" \
+  --working-directory="$HOME" \
+  -- bash -lc 'source ~/.zshrc 2>/dev/null; issue-agent-ui; echo; echo "Session ended. Press Enter to close."; read'

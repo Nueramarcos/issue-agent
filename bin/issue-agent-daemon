@@ -1,0 +1,10 @@
+#!/usr/bin/env zsh
+# 24/7 fleet daemon — rotate repos, heal CI, close stale tickets
+source "$HOME/.config/cockpit/secrets.env" 2>/dev/null
+export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.cargo/bin:$PATH"
+export OLLAMA_HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
+LOG="$HOME/issue-agent/logs/daemon.log"
+mkdir -p "$(dirname "$LOG")"
+exec >>"$LOG" 2>&1
+echo "=== daemon $(date -u) pid=$$ ==="
+exec "$HOME/.local/venvs/aider/bin/python" "$HOME/issue-agent/issue_agent.py" daemon "$@"
