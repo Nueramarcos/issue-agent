@@ -13,6 +13,7 @@ ci-heal-state.json
 ci-heal-queue.json
 failure-ledger.json
 failures.json
+broadcasts/
 fleet-state.json
 local-queue.json
 scout-queue.json

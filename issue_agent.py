@@ -26,6 +26,7 @@ except ImportError:
     yaml = None  # type: ignore
 
 from broadcast import broadcast_merge, compose_fleet_post, compose_merge_post, save_broadcast
+from lora_export import build_lora_dataset, export_lora_jsonl
 from radar import enrich_opportunity
 from tower import TowerVerdict, tower_block_comment, tower_review_workspace
 
@@ -4580,6 +4581,72 @@ def cmd_recorder(args: argparse.Namespace) -> int:
     return 0
 
 
+def _collect_training_rows(*, with_gh: bool = False, limit: int = 50) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = list(_load_trajectories())
+    for key, entry in load_failure_ledger().get("items", {}).items():
+        rows.append({"outcome": "failure_ledger", "key": key, **entry, "source": "failure-ledger.json"})
+    if ACTIVITY_LOG.exists():
+        try:
+            for ev in json.loads(ACTIVITY_LOG.read_text())[-limit:]:
+                if ev.get("event") in ("tower_pass", "tower_reject", "habitat_ready", "pass", "failure"):
+                    rows.append({"outcome": "activity", **ev, "source": "activity.json"})
+        except json.JSONDecodeError:
+            pass
+    if with_gh:
+        for entry in load_repos_config_raw():
+            repo = entry.get("name")
+            if not repo:
+                continue
+            for pr in _fetch_merged_prs(repo, limit=limit):
+                rows.append(
+                    {
+                        "outcome": "merged_pr",
+                        "repo": repo,
+                        "pr_number": pr.get("number"),
+                        "title": pr.get("title"),
+                        "url": pr.get("url"),
+                        "merged_at": pr.get("mergedAt"),
+                        "source": "gh",
+                    }
+                )
+    return rows
+
+
+def cmd_lora(args: argparse.Namespace) -> int:
+    load_secrets()
+    if args.action == "stats":
+        rows = _collect_training_rows(with_gh=args.with_gh, limit=args.limit)
+        dataset = build_lora_dataset(rows)
+        by_task: dict[str, int] = {}
+        for ex in dataset:
+            by_task[ex["task"]] = by_task.get(ex["task"], 0) + 1
+        print("LoRA dataset preview\n")
+        print(f"  raw rows: {len(rows)}")
+        print(f"  instruction examples: {len(dataset)}")
+        if by_task:
+            print("  tasks:")
+            for task, n in sorted(by_task.items(), key=lambda x: -x[1]):
+                print(f"    {task}: {n}")
+        min_rec = 20
+        if len(dataset) < min_rec:
+            print(f"\n  note: {min_rec - len(dataset)} more examples recommended before LoRA run")
+        return 0
+
+    out_path = (
+        Path(args.output)
+        if args.output
+        else FLIGHT_RECORDER_DIR / f"lora-dataset-{datetime.now(timezone.utc).strftime('%Y%m%d')}.jsonl"
+    )
+    rows = _collect_training_rows(with_gh=args.with_gh, limit=args.limit)
+    include = set(args.task.split(",")) if args.task else None
+    n = export_lora_jsonl(rows, out_path, include_tasks=include)
+    manifest = out_path.with_suffix(".manifest.json")
+    print(f"LoRA dataset: {n} instruction example(s) → {out_path}")
+    print(f"  manifest: {manifest}")
+    print("  next: ollama or unsloth fine-tune qwen2.5-coder:1.5b on this file")
+    return 0
+
+
 def cmd_broadcast(args: argparse.Namespace) -> int:
     load_secrets()
     BROADCAST_DIR.mkdir(parents=True, exist_ok=True)
@@ -4903,6 +4970,19 @@ def build_parser() -> argparse.ArgumentParser:
     r = rec_sub.add_parser("tail", help="Show recent trajectory lines")
     r.add_argument("--limit", type=int, default=20)
     r.set_defaults(func=cmd_recorder, action="tail")
+
+    lora = sub.add_parser("lora", help="LoRA instruction dataset from Flight Recorder")
+    lora_sub = lora.add_subparsers(dest="action", required=True)
+    r = lora_sub.add_parser("export", help="Export instruction JSONL for 1.5b fine-tune")
+    r.add_argument("-o", "--output", help="Output path")
+    r.add_argument("--with-gh", action="store_true", help="Include merged PRs from GitHub")
+    r.add_argument("--limit", type=int, default=50)
+    r.add_argument("--task", help="Comma-separated tasks: triage_failure,tower_review,merge_success,...")
+    r.set_defaults(func=cmd_lora, action="export")
+    r = lora_sub.add_parser("stats", help="Preview LoRA example counts")
+    r.add_argument("--with-gh", action="store_true")
+    r.add_argument("--limit", type=int, default=50)
+    r.set_defaults(func=cmd_lora, action="stats")
 
     return p
 
