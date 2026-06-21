@@ -5,6 +5,10 @@ repos:
     ci_workflows: [CI]
     wait_for_checks: false
     park_minutes: 3
+    habitat:
+      stack: python
+      bootstrap:
+        - python3 -m pip install -q pytest
 
   - name: Nueramarcos/forge-ci-reliability
     branch: main
@@ -13,6 +17,10 @@ repos:
     test_command: "python3 -m pip install -q -r requirements-dev.txt && python3 -m pytest -q"
     wait_for_checks: false
     park_minutes: 3
+    habitat:
+      stack: python
+      bootstrap:
+        - python3 -m pip install -q -r requirements-dev.txt
 
   - name: Nueramarcos/nexus-vision-engine
     branch: main
@@ -21,6 +29,11 @@ repos:
     test_command: "python3 -m pip install -e . -q && python3 -m pytest -q"
     wait_for_checks: false
     park_minutes: 3
+    habitat:
+      stack: python
+      bootstrap:
+        - python3 -m pip install -q pytest
+        - python3 -m pip install -e . -q
 
   - name: Nueramarcos/vertex-sim-core
     branch: main
@@ -29,6 +42,9 @@ repos:
     test_command: "cargo test"
     wait_for_checks: false
     park_minutes: 3
+    habitat:
+      stack: rust
+      bootstrap: []
 
   - name: Nueramarcos/tinygrad
     branch: master
@@ -40,6 +56,10 @@ repos:
     test_command: "python3 -m pip install -e . -q && python3 -c \"from tinygrad import Device; print(Device.DEFAULT)\""
     wait_for_checks: false
     check_timeout_secs: 420
+    habitat:
+      stack: python
+      bootstrap:
+        - python3 -m pip install -e . -q
 
   - name: Nueramarcos/vision
     branch: main
@@ -50,6 +70,10 @@ repos:
     test_command: "python3 -m pip install -e . -q && python3 -c \"import torchvision; print(torchvision.__version__)\""
     wait_for_checks: false
     check_timeout_secs: 600
+    habitat:
+      stack: python
+      bootstrap:
+        - python3 -m pip install -e . -q
 
   # ML upstream forks (tier 1 — agent-friendly)
   - name: Nueramarcos/micrograd

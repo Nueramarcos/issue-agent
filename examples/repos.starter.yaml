@@ -10,3 +10,8 @@ repos:
     draft_pr: false
     auto_merge: true
     trigger_label: agent-triage
+    tower_enabled: true
+    habitat:
+      stack: python
+      bootstrap:
+        - python3 -m pip install -q pytest

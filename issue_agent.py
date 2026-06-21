@@ -33,7 +33,9 @@ WORKSPACES = Path(os.environ.get("ISSUE_AGENT_WORKSPACES", HOME / "agent-workspa
 LOG_DIR = AGENT_ROOT / "logs"
 CONFIG_DEFAULTS = AGENT_ROOT / "config.default.toml"
 
-SYSTEM_PROMPT = """You are a local autonomous coding agent fixing GitHub issues.
+SYSTEM_PROMPT = """You are Habitat Solver — a local autonomous GitHub issue resolver.
+
+You operate inside ephemeral workspaces (Habitats). Tower validates your diff before push.
 
 Rules:
 - Minimal, focused diffs only — no drive-by refactors
@@ -44,6 +46,7 @@ Rules:
 - If stuck after reasonable attempts, explain clearly in the commit message
 - NEVER create files whose names look like shell commands (e.g. "python foo.py" or "cargo test")
 - Only edit files explicitly required by the issue
+- Touch at most the configured max_files limit
 """
 
 
@@ -64,6 +67,7 @@ class RepoConfig:
         default_factory=lambda: ["wontfix", "question", "help wanted", "architecture"]
     )
     trigger_label: str = "agent-triage"
+    tower_enabled: bool = True
 
 
 _QUIET_COMMANDS = 0
@@ -207,6 +211,8 @@ def repo_config(repo: str, ws: Path) -> RepoConfig:
         cfg.check_poll_secs = int(meta["check_poll_secs"])
     if meta.get("ci_workflows"):
         cfg.ci_workflows = list(meta["ci_workflows"])
+    if "tower_enabled" in meta:
+        cfg.tower_enabled = bool(meta["tower_enabled"])
     cfg_path = ws / ".issue-agent.yml"
     if cfg_path.exists() and yaml:
         data = yaml.safe_load(cfg_path.read_text()) or {}
@@ -223,6 +229,8 @@ def repo_config(repo: str, ws: Path) -> RepoConfig:
             cfg.trigger_label = data.get("trigger_label", cfg.trigger_label)
             if data.get("skip_labels"):
                 cfg.skip_labels = list(data["skip_labels"])
+            if "tower_enabled" in data:
+                cfg.tower_enabled = bool(data["tower_enabled"])
     return cfg
 
 
@@ -246,6 +254,183 @@ def detect_test_command(ws: Path, override: str | None) -> str | None:
     if (ws / "Makefile").exists():
         return "make test"
     return None
+
+
+HABITAT_CACHE = Path(os.environ.get("ISSUE_AGENT_HABITATS", HOME / "agent-habitats"))
+
+SECRET_PATTERNS = [
+    re.compile(r"(?i)(api[_-]?key|secret|password|token|private[_-]?key)\s*[=:]\s*['\"]?[a-zA-Z0-9_\-./]{8,}"),
+    re.compile(r"-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----"),
+]
+JUNK_FILENAME_PREFIXES = ("python ", "cargo ", "npm ", "pip ", "make ")
+
+
+@dataclass
+class TowerVerdict:
+    passed: bool
+    confidence: str
+    reasons: list[str]
+    checks: dict[str, bool]
+    files_changed: list[str]
+
+
+def detect_stack(ws: Path) -> str:
+    if (ws / "Cargo.toml").exists():
+        return "rust"
+    if (ws / "CMakeLists.txt").exists() and not (ws / "pyproject.toml").exists():
+        return "cpp"
+    if (ws / "package.json").exists() and not (ws / "pyproject.toml").exists():
+        return "node"
+    if (ws / "pyproject.toml").exists() or (ws / "setup.py").exists() or (ws / "requirements.txt").exists():
+        return "python"
+    return "unknown"
+
+
+def default_habitat_bootstrap(stack: str) -> list[str]:
+    return {
+        "python": [],
+        "rust": [],
+        "node": ["npm ci --if-present 2>/dev/null || npm install --if-present 2>/dev/null || true"],
+        "cpp": [],
+        "unknown": [],
+    }.get(stack, [])
+
+
+def habitat_spec(repo: str, ws: Path) -> dict[str, Any]:
+    meta = repo_entry(repo)
+    spec = dict(meta.get("habitat") or {})
+    if "stack" not in spec:
+        spec["stack"] = detect_stack(ws)
+    if "bootstrap" not in spec:
+        spec["bootstrap"] = default_habitat_bootstrap(str(spec["stack"]))
+    return spec
+
+
+def bootstrap_habitat(ws: Path, repo: str) -> dict[str, Any]:
+    """Prepare repo-specific Habitat before the solver runs."""
+    spec = habitat_spec(repo, ws)
+    stack = str(spec.get("stack", "unknown"))
+    slug = repo.replace("/", "_")
+    cache_dir = HABITAT_CACHE / slug
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    manifest = cache_dir / "habitat.json"
+    manifest.write_text(json.dumps({"repo": repo, "stack": stack, "spec": spec}, indent=2))
+
+    for cmd in spec.get("bootstrap") or []:
+        if not str(cmd).strip():
+            continue
+        log(f"habitat bootstrap [{stack}]: {cmd[:120]}")
+        result = run(str(cmd), cwd=ws, shell=True, check=False)
+        if result.returncode != 0:
+            out = ((result.stdout or "") + (result.stderr or ""))[-500:]
+            log(f"habitat bootstrap warning (non-fatal): {out}")
+    log_activity("habitat_ready", repo, stack, stack=stack, bootstrap_steps=len(spec.get("bootstrap") or []))
+    return spec
+
+
+def changed_files(ws: Path, base_branch: str) -> list[str]:
+    run(["git", "fetch", "origin"], cwd=ws, check=False)
+    result = run(["git", "diff", "--name-only", f"origin/{base_branch}...HEAD"], cwd=ws, check=False)
+    if result.returncode != 0:
+        result = run(["git", "diff", "--name-only", "HEAD"], cwd=ws, check=False)
+    return [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+
+
+def diff_text(ws: Path, base_branch: str) -> str:
+    run(["git", "fetch", "origin"], cwd=ws, check=False)
+    result = run(["git", "diff", f"origin/{base_branch}...HEAD"], cwd=ws, check=False)
+    if result.returncode != 0:
+        result = run(["git", "diff", "HEAD"], cwd=ws, check=False)
+    return (result.stdout or "") + (result.stderr or "")
+
+
+def tower_review(
+    ws: Path,
+    repo: str,
+    cfg: RepoConfig,
+    *,
+    base_branch: str,
+    issue_summary: str = "",
+) -> TowerVerdict:
+    """Tower gate — deterministic reviewer before push."""
+    reasons: list[str] = []
+    checks: dict[str, bool] = {}
+    files = changed_files(ws, base_branch)
+    diff = diff_text(ws, base_branch)
+
+    checks["has_changes"] = bool(files)
+    if not files:
+        reasons.append("No file changes to review")
+        return TowerVerdict(False, "high", reasons, checks, files)
+
+    checks["file_count"] = len(files) <= cfg.max_files
+    if len(files) > cfg.max_files:
+        reasons.append(f"Diff touches {len(files)} files (max {cfg.max_files}): {', '.join(files[:12])}")
+
+    forbidden = [f for f in files if f.endswith(".env") or f.split("/")[-1].startswith(".env")]
+    checks["no_env_files"] = not forbidden
+    if forbidden:
+        reasons.append(f"Forbidden env files in diff: {', '.join(forbidden)}")
+
+    junk = [f for f in files if any(f.startswith(p) for p in JUNK_FILENAME_PREFIXES)]
+    checks["no_junk_filenames"] = not junk
+    if junk:
+        reasons.append(f"Junk shell-command filenames: {', '.join(junk)}")
+
+    secret_hits: list[str] = []
+    for pat in SECRET_PATTERNS:
+        if pat.search(diff):
+            secret_hits.append(pat.pattern[:40])
+    checks["no_secrets"] = not secret_hits
+    if secret_hits:
+        reasons.append("Possible secrets/credentials detected in diff")
+
+    if len(diff) > 12000:
+        checks["diff_size"] = False
+        reasons.append(f"Diff too large ({len(diff)} chars) — likely drive-by refactor")
+    else:
+        checks["diff_size"] = True
+
+    py_files = [f for f in files if f.endswith(".py") and (ws / f).exists()]
+    if py_files:
+        ruff = run(["ruff", "check", "--select=E9,F821", *py_files], cwd=ws, check=False)
+        ruff_out = (ruff.stdout or "") + (ruff.stderr or "")
+        critical = [line for line in ruff_out.splitlines() if any(code in line for code in ("E9", "F821", "SyntaxError"))]
+        checks["ruff_critical"] = ruff.returncode == 0 or not critical
+        if critical and ruff.returncode != 0:
+            reasons.append(f"Ruff critical issues in {len(critical)} line(s)")
+    else:
+        checks["ruff_critical"] = True
+
+    passed = all(checks.values())
+    confidence = "high" if passed else "high"
+    if passed and len(files) <= 2 and checks.get("diff_size"):
+        confidence = "high"
+    elif passed:
+        confidence = "med"
+
+    detail = "PASS" if passed else "REJECT"
+    log(f"Tower {detail} {repo}: {len(files)} files, confidence={confidence}" + (f" — {issue_summary[:60]}" if issue_summary else ""))
+    log_activity(
+        "tower_pass" if passed else "tower_reject",
+        repo,
+        f"{len(files)} files, {confidence}",
+        files=files[:20],
+        reasons=reasons[:5],
+    )
+    return TowerVerdict(passed, confidence, reasons, checks, files)
+
+
+def tower_block_comment(verdict: TowerVerdict) -> str:
+    lines = ["🤖 **Issue Agent — Tower rejected this diff**", ""]
+    lines.extend(f"- {r}" for r in verdict.reasons)
+    if verdict.files_changed:
+        lines.append("")
+        lines.append("**Files changed:**")
+        lines.extend(f"- `{f}`" for f in verdict.files_changed[:15])
+    lines.append("")
+    lines.append(f"*Confidence: {verdict.confidence} · re-queue with agent-triage after adjusting scope*")
+    return "\n".join(lines)
 
 
 def workspace_for(repo: str, issue_num: int | None = None) -> Path:
@@ -832,6 +1017,7 @@ def push_ci_repair_pr(
     run(["git", "checkout", "-B", branch], cwd=ws)
     run(["git", "fetch", "origin"], cwd=ws, check=False)
     run(["git", "merge", f"origin/{default_branch(repo)}"], cwd=ws, check=False)
+    bootstrap_habitat(ws, repo)
 
     logs = body
     known_fix = try_known_ci_repair(ws, repo, logs)
@@ -883,6 +1069,12 @@ def push_ci_repair_pr(
         return 1
     if known_fix:
         log(f"known CI repair applied for {repo}, deferring validation to GitHub Actions")
+
+    if cfg.tower_enabled and not known_fix:
+        verdict = tower_review(ws, repo, cfg, base_branch=default_branch(repo), issue_summary=title[:70])
+        if not verdict.passed:
+            record_failure(repo, "ci_heal", "default", "tower rejected: " + "; ".join(verdict.reasons)[:400])
+            return 1
 
     run(["git", "push", "-u", "origin", branch, "--force-with-lease"], cwd=ws, check=False)
     pr = run(
@@ -966,6 +1158,7 @@ def resolve_issue(repo: str, issue_num: int, *, dry_run: bool = False) -> int:
 
     branch = f"fix/issue-{issue_num}"
     run(["git", "checkout", "-B", branch], cwd=ws)
+    bootstrap_habitat(ws, repo)
 
     issue = gh_json(["issue", "view", str(issue_num), "-R", repo, "--json", "title,body"])
     issue_text = f"#{issue_num}: {issue['title']}\n{issue.get('body') or ''}"
@@ -1040,6 +1233,40 @@ def resolve_issue(repo: str, issue_num: int, *, dry_run: bool = False) -> int:
             spec_title=issue["title"],
         )
         return 1
+
+    if cfg.tower_enabled:
+        verdict = tower_review(
+            ws,
+            repo,
+            cfg,
+            base_branch=base,
+            issue_summary=issue.get("title", ""),
+        )
+        if not verdict.passed:
+            run(
+                ["gh", "issue", "comment", str(issue_num), "-R", repo, "--body", tower_block_comment(verdict)],
+                check=False,
+            )
+            record_failure(
+                repo,
+                "issue",
+                str(issue_num),
+                "tower rejected: " + "; ".join(verdict.reasons)[:400],
+                issue_num=issue_num,
+                spec_title=issue["title"],
+            )
+            return 1
+        append_flight_record(
+            {
+                "outcome": "tower_pass",
+                "repo": repo,
+                "scope": "issue",
+                "ident": str(issue_num),
+                "issue_num": issue_num,
+                "confidence": verdict.confidence,
+                "files": verdict.files_changed,
+            }
+        )
 
     # push + draft PR
     run(["git", "push", "-u", "origin", branch, "--force-with-lease"], cwd=ws, check=False)
@@ -1208,6 +1435,10 @@ def cmd_status(args: argparse.Namespace) -> int:
                 f"({f.get('attempts')}/{f.get('max_attempts')}) — {f.get('hint', '')[:55]}"
             )
         print(f"  full digest: {FAILURE_DIGEST}")
+
+    traj_n = len(_load_trajectories())
+    if traj_n or FLIGHT_TRAJECTORIES.exists():
+        print(f"\n  flight recorder: {traj_n} trajectory(ies) → {FLIGHT_TRAJECTORIES}")
 
     save_status_digest(
         {
@@ -1440,6 +1671,8 @@ SCOUT_QUEUE_FILE = AGENT_ROOT / "scout-queue.json"
 AIRPORT_STATUS = AGENT_ROOT / "airport-status.json"
 AIRPORT_PID_DIR = LOG_DIR / "airport-pids"
 SOLVABILITY_STATE = AGENT_ROOT / "solvability.json"
+FLIGHT_RECORDER_DIR = AGENT_ROOT / "flight-recorder"
+FLIGHT_TRAJECTORIES = FLIGHT_RECORDER_DIR / "trajectories.jsonl"
 
 _SOLV_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 SOLV_CACHE_TTL_SECS = 90
@@ -1547,6 +1780,14 @@ def save_failure_ledger(state: dict[str, Any]) -> None:
     FAILURE_LEDGER.parent.mkdir(parents=True, exist_ok=True)
     state["ts"] = datetime.now(timezone.utc).isoformat()
     FAILURE_LEDGER.write_text(json.dumps(state, indent=2))
+
+
+def append_flight_record(record: dict[str, Any]) -> None:
+    """Flight Recorder — append-only trajectory log for LoRA / RAG training."""
+    FLIGHT_RECORDER_DIR.mkdir(parents=True, exist_ok=True)
+    record.setdefault("ts", datetime.now(timezone.utc).isoformat())
+    with FLIGHT_TRAJECTORIES.open("a") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
 def failure_key(repo: str, scope: str, ident: str) -> str:
@@ -1736,6 +1977,20 @@ def record_failure(
             digest = []
     digest.append({**entry, "key": key})
     FAILURE_DIGEST.write_text(json.dumps(digest[-100:], indent=2))
+    append_flight_record(
+        {
+            "outcome": "failure",
+            "repo": repo,
+            "scope": scope,
+            "ident": ident,
+            "issue_num": issue_num,
+            "kind": kind,
+            "hint": hint,
+            "detail": detail[-500:],
+            "attempts": attempts,
+            "blocked": entry["blocked"],
+        }
+    )
     log_activity("failure", repo, f"{scope}/{ident} {kind} ({attempts}/{MAX_FAILURE_ATTEMPTS})")
     if entry["blocked"]:
         log(f"BLOCKED {key} after {attempts} attempts — {hint}")
@@ -1768,6 +2023,15 @@ def record_success(repo: str, scope: str, ident: str, *, spec_title: str | None 
             changed = True
     if changed:
         save_failure_ledger(state)
+    append_flight_record(
+        {
+            "outcome": "success",
+            "repo": repo,
+            "scope": scope,
+            "ident": ident,
+            "spec_title": spec_title,
+        }
+    )
     log_activity("pass", repo, f"{scope}/{ident}")
 
 
@@ -4118,6 +4382,7 @@ def resolve_issue_local(
 
     branch = f"fix/local-{slug}"
     run(["git", "checkout", "-B", branch], cwd=ws)
+    bootstrap_habitat(ws, repo)
 
     issue_text = f"{title}\n{body}"
     if dry_run:
@@ -4197,6 +4462,13 @@ def resolve_issue_local(
         record_failure(repo, "local", title[:80], f"tests failed: {test_out[-300:]}")
         return 1
 
+    if cfg.tower_enabled and not known_fix:
+        verdict = tower_review(ws, repo, cfg, base_branch=base, issue_summary=title[:70])
+        if not verdict.passed:
+            log(f"Tower rejected local fix on {repo}: {'; '.join(verdict.reasons)}")
+            record_failure(repo, "local", title[:80], "tower rejected: " + "; ".join(verdict.reasons)[:400])
+            return 1
+
     run(["git", "push", "-u", "origin", branch, "--force-with-lease"], cwd=ws, check=False)
     pr_args = [
         "gh",
@@ -4241,6 +4513,155 @@ def cmd_demo(args: argparse.Namespace) -> int:
         body=spec["body"],
         dry_run=args.dry_run,
     )
+
+
+def _load_trajectories(limit: int | None = None) -> list[dict[str, Any]]:
+    if not FLIGHT_TRAJECTORIES.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in FLIGHT_TRAJECTORIES.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    if limit is not None:
+        return rows[-limit:]
+    return rows
+
+
+def _fetch_merged_prs(repo: str, *, limit: int = 30) -> list[dict[str, Any]]:
+    result = run(
+        [
+            "gh",
+            "pr",
+            "list",
+            "-R",
+            repo,
+            "--state",
+            "merged",
+            "--search",
+            "Issue Agent",
+            "--json",
+            "number,title,mergedAt,url,additions,deletions",
+            "--limit",
+            str(limit),
+        ],
+        check=False,
+    )
+    try:
+        return json.loads(result.stdout or "[]")
+    except json.JSONDecodeError:
+        return []
+
+
+def cmd_recorder(args: argparse.Namespace) -> int:
+    load_secrets()
+    action = args.action
+
+    if action == "stats":
+        rows = _load_trajectories()
+        by_outcome: dict[str, int] = {}
+        by_repo: dict[str, int] = {}
+        for row in rows:
+            outcome = str(row.get("outcome", "unknown"))
+            by_outcome[outcome] = by_outcome.get(outcome, 0) + 1
+            repo = str(row.get("repo", ""))
+            if repo:
+                by_repo[repo] = by_repo.get(repo, 0) + 1
+        ledger = load_failure_ledger().get("items", {})
+        print("Flight Recorder — stats\n")
+        print(f"  trajectories: {len(rows)} ({FLIGHT_TRAJECTORIES})")
+        print(f"  failure ledger: {len(ledger)} active item(s)")
+        if by_outcome:
+            print("  outcomes:")
+            for k, v in sorted(by_outcome.items(), key=lambda x: -x[1]):
+                print(f"    {k}: {v}")
+        if by_repo:
+            top = sorted(by_repo.items(), key=lambda x: -x[1])[:8]
+            print("  top repos:")
+            for repo, n in top:
+                print(f"    {repo.split('/')[-1]}: {n}")
+        return 0
+
+    if action == "tail":
+        for row in _load_trajectories(args.limit):
+            ts = str(row.get("ts", ""))[:19]
+            print(f"{ts}  {row.get('outcome', '?'):12}  {row.get('repo', '')}  {row.get('detail', row.get('ident', ''))[:60]}")
+        return 0
+
+    # export
+    out_path = Path(args.output) if args.output else FLIGHT_RECORDER_DIR / f"training-export-{datetime.now(timezone.utc).strftime('%Y%m%d')}.jsonl"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    exported = 0
+    with out_path.open("w") as out:
+        for row in _load_trajectories():
+            out.write(json.dumps(row, ensure_ascii=False) + "\n")
+            exported += 1
+        for key, entry in load_failure_ledger().get("items", {}).items():
+            record = {
+                "outcome": "failure_ledger",
+                "key": key,
+                **entry,
+                "source": "failure-ledger.json",
+            }
+            out.write(json.dumps(record, ensure_ascii=False) + "\n")
+            exported += 1
+        if ACTIVITY_LOG.exists():
+            try:
+                for ev in json.loads(ACTIVITY_LOG.read_text())[-args.limit :]:
+                    if ev.get("event") in ("tower_pass", "tower_reject", "habitat_ready", "pass", "failure"):
+                        record = {"outcome": "activity", **ev, "source": "activity.json"}
+                        out.write(json.dumps(record, ensure_ascii=False) + "\n")
+                        exported += 1
+            except json.JSONDecodeError:
+                pass
+        if args.with_gh:
+            for entry in load_repos_config_raw():
+                repo = entry.get("name")
+                if not repo:
+                    continue
+                for pr in _fetch_merged_prs(repo, limit=args.limit):
+                    record = {
+                        "outcome": "merged_pr",
+                        "repo": repo,
+                        "pr_number": pr.get("number"),
+                        "title": pr.get("title"),
+                        "url": pr.get("url"),
+                        "merged_at": pr.get("mergedAt"),
+                        "additions": pr.get("additions"),
+                        "deletions": pr.get("deletions"),
+                        "source": "gh",
+                    }
+                    out.write(json.dumps(record, ensure_ascii=False) + "\n")
+                    exported += 1
+    print(f"Flight Recorder exported {exported} record(s) → {out_path}")
+    return 0
+
+
+def cmd_tower(args: argparse.Namespace) -> int:
+    load_secrets()
+    base_ws = workspace_for(args.repo)
+    ensure_repo(args.repo, base_ws)
+    cfg = repo_config(args.repo, base_ws)
+    ws = workspace_for(args.repo, args.issue) if args.issue else base_ws
+    if args.issue and not ws.exists():
+        run(["cp", "-a", str(base_ws), str(ws)], check=False)
+    base = default_branch(args.repo)
+    verdict = tower_review(ws, args.repo, cfg, base_branch=base, issue_summary=args.summary or "")
+    print(json.dumps(
+        {
+            "passed": verdict.passed,
+            "confidence": verdict.confidence,
+            "reasons": verdict.reasons,
+            "checks": verdict.checks,
+            "files_changed": verdict.files_changed,
+        },
+        indent=2,
+    ))
+    return 0 if verdict.passed else 1
 
 
 def cmd_relentless(args: argparse.Namespace) -> int:
@@ -4475,6 +4896,25 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("failures", help="Show failure ledger and hints")
     s.set_defaults(func=lambda _: cmd_status(argparse.Namespace()) or 0)
+
+    s = sub.add_parser("tower", help="Run Tower reviewer on a workspace diff")
+    s.add_argument("repo", help="owner/repo")
+    s.add_argument("issue", type=int, nargs="?", help="Issue workspace slug (optional)")
+    s.add_argument("--summary", default="", help="Issue title for logging")
+    s.set_defaults(func=cmd_tower)
+
+    rec = sub.add_parser("recorder", help="Flight Recorder — export training trajectories")
+    rec_sub = rec.add_subparsers(dest="action", required=True)
+    r = rec_sub.add_parser("export", help="Export JSONL for LoRA / RAG training")
+    r.add_argument("-o", "--output", help="Output path (default: flight-recorder/training-export-YYYYMMDD.jsonl)")
+    r.add_argument("--with-gh", action="store_true", help="Include merged Issue Agent PRs from GitHub")
+    r.add_argument("--limit", type=int, default=50, help="Max GH PRs / activity events per repo")
+    r.set_defaults(func=cmd_recorder, action="export")
+    r = rec_sub.add_parser("stats", help="Trajectory and ledger counts")
+    r.set_defaults(func=cmd_recorder, action="stats")
+    r = rec_sub.add_parser("tail", help="Show recent trajectory lines")
+    r.add_argument("--limit", type=int, default=20)
+    r.set_defaults(func=cmd_recorder, action="tail")
 
     return p
 
