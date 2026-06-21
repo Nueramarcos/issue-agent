@@ -27,6 +27,14 @@ except ImportError:
 
 from broadcast import broadcast_merge, compose_fleet_post, compose_merge_post, save_broadcast
 from lora_export import build_lora_dataset, export_lora_jsonl
+from prompt_loader import (
+    DEFAULT_SOLVER,
+    DEFAULT_TRIAGE,
+    load_solver_prompt,
+    load_triage_prompt,
+    load_vision,
+    prompt_inventory,
+)
 from radar import enrich_opportunity
 from tower import TowerVerdict, tower_block_comment, tower_review_workspace
 
@@ -38,21 +46,21 @@ WORKSPACES = Path(os.environ.get("ISSUE_AGENT_WORKSPACES", HOME / "agent-workspa
 LOG_DIR = AGENT_ROOT / "logs"
 CONFIG_DEFAULTS = AGENT_ROOT / "config.default.toml"
 
-SYSTEM_PROMPT = """You are Habitat Solver — a local autonomous GitHub issue resolver.
-
-You operate inside ephemeral workspaces (Habitats). Tower validates your diff before push.
-
-Rules:
-- Minimal, focused diffs only — no drive-by refactors
-- Read the issue and relevant files before editing
-- Run tests after changes
-- Never commit secrets, credentials, or .env files
-- Never force-push to main
-- If stuck after reasonable attempts, explain clearly in the commit message
-- NEVER create files whose names look like shell commands (e.g. "python foo.py" or "cargo test")
-- Only edit files explicitly required by the issue
-- Touch at most the configured max_files limit
-"""
+def solver_prompt(
+    repo: str,
+    issue_summary: str,
+    cfg: RepoConfig,
+    *,
+    prompt_path: Path | None = None,
+) -> str:
+    path = prompt_path or (Path(cfg.prompt_path) if cfg.prompt_path else DEFAULT_SOLVER)
+    return load_solver_prompt(
+        repo,
+        issue_summary,
+        max_files=cfg.max_files,
+        agent_root=AGENT_ROOT,
+        prompt_path=path,
+    )
 
 
 @dataclass
@@ -73,6 +81,8 @@ class RepoConfig:
     )
     trigger_label: str = "agent-triage"
     tower_enabled: bool = True
+    prompt_path: str | None = None
+    triage_prompt_path: str | None = None
 
 
 _QUIET_COMMANDS = 0
@@ -218,6 +228,10 @@ def repo_config(repo: str, ws: Path) -> RepoConfig:
         cfg.ci_workflows = list(meta["ci_workflows"])
     if "tower_enabled" in meta:
         cfg.tower_enabled = bool(meta["tower_enabled"])
+    if meta.get("prompt_path"):
+        cfg.prompt_path = str(meta["prompt_path"])
+    if meta.get("triage_prompt_path"):
+        cfg.triage_prompt_path = str(meta["triage_prompt_path"])
     cfg_path = ws / ".issue-agent.yml"
     if cfg_path.exists() and yaml:
         data = yaml.safe_load(cfg_path.read_text()) or {}
@@ -236,6 +250,10 @@ def repo_config(repo: str, ws: Path) -> RepoConfig:
                 cfg.skip_labels = list(data["skip_labels"])
             if "tower_enabled" in data:
                 cfg.tower_enabled = bool(data["tower_enabled"])
+            if data.get("prompt_path"):
+                cfg.prompt_path = str(data["prompt_path"])
+            if data.get("triage_prompt_path"):
+                cfg.triage_prompt_path = str(data["triage_prompt_path"])
     return cfg
 
 
@@ -495,17 +513,13 @@ def triage_issue(repo: str, issue_num: int, cfg: RepoConfig) -> dict[str, Any]:
     if labels & set(cfg.skip_labels):
         return {"actionable": False, "complexity": "low", "type": "skipped", "summary": "skip label present"}
 
-    prompt = textwrap.dedent(
-        f"""
-        Classify this GitHub issue for an autonomous coding agent.
-        Reply with JSON only:
-        {{"actionable": true/false, "complexity": "low|medium|high", "type": "bug|feature|docs|question", "summary": "one sentence"}}
-
-        Title: {issue.get('title', '')}
-        Body:
-        {(issue.get('body') or '')[:4000]}
-        """
-    ).strip()
+    triage_path = Path(cfg.triage_prompt_path) if cfg.triage_prompt_path else DEFAULT_TRIAGE
+    prompt = load_triage_prompt(
+        issue.get("title", ""),
+        issue.get("body") or "",
+        agent_root=AGENT_ROOT,
+        prompt_path=triage_path,
+    )
     result = ollama_json(prompt, cfg.triage_model)
     result["issue"] = issue
     return result
@@ -934,16 +948,11 @@ def push_ci_repair_pr(
     if not known_fix:
         aider_msg = textwrap.dedent(
             f"""
-            {SYSTEM_PROMPT}
+            {solver_prompt(repo, f"CI heal: {title[:70]}", cfg)}
 
             Fix failing GitHub Actions CI for {repo}.
 
             {body}
-
-            Constraints:
-            - Touch at most {cfg.max_files} files
-            - Make CI pass with minimal changes
-            - Do not break existing functionality
             """
         ).strip()
         with acquire_aider_slot():
@@ -1082,16 +1091,11 @@ def resolve_issue(repo: str, issue_num: int, *, dry_run: bool = False) -> int:
 
     aider_msg = textwrap.dedent(
         f"""
-        {SYSTEM_PROMPT}
+        {solver_prompt(repo, issue.get("title", ""), cfg)}
 
         Fix GitHub issue in repository {repo}.
 
         {issue_text}
-
-        Constraints:
-        - Touch at most {cfg.max_files} files
-        - Run tests before finishing
-        - Minimal change set
         """
     ).strip()
 
@@ -4331,15 +4335,11 @@ def resolve_issue_local(
 
     aider_msg = textwrap.dedent(
         f"""
-        {SYSTEM_PROMPT}
+        {solver_prompt(repo, title, cfg)}
 
         Task for repository {repo}:
 
         {issue_text}
-
-        Constraints:
-        - Touch at most {cfg.max_files} files
-        - Minimal change set
         """
     ).strip()
 
@@ -4647,6 +4647,45 @@ def cmd_lora(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_prompt(args: argparse.Namespace) -> int:
+    action = args.action
+    if action == "goal":
+        inv = prompt_inventory(AGENT_ROOT)
+        print("Habitat Solver — prompt goal checklist\n")
+        for key, val in inv.items():
+            mark = "✓" if val is True else ("✗" if val is False else " ")
+            print(f"  [{mark}] {key}: {val}")
+        if inv.get("goal_met"):
+            print("\n  PROMPT GOAL MET — master prompt is live across issue-agent + prompts/")
+            return 0
+        print("\n  PROMPT GOAL NOT MET — see failures above")
+        return 1
+
+    if action == "vision":
+        print(load_vision())
+        return 0
+
+    if action == "triage":
+        text = load_triage_prompt(
+            args.title or "Add pytest smoke test",
+            args.body or "Add tests/test_smoke.py only.",
+            agent_root=AGENT_ROOT,
+        )
+        print(text)
+        return 0
+
+    # show solver (default)
+    repo = args.repo or "Nueramarcos/orion-ai-agent"
+    cfg = RepoConfig(repo=repo, max_files=args.max_files)
+    text = solver_prompt(repo, args.title or "Fix README badges", cfg)
+    if args.output:
+        Path(args.output).write_text(text + "\n")
+        print(f"written → {args.output}")
+    else:
+        print(text)
+    return 0
+
+
 def cmd_broadcast(args: argparse.Namespace) -> int:
     load_secrets()
     BROADCAST_DIR.mkdir(parents=True, exist_ok=True)
@@ -4942,6 +4981,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("failures", help="Show failure ledger and hints")
     s.set_defaults(func=lambda _: cmd_status(argparse.Namespace()) or 0)
+
+    pr = sub.add_parser("prompt", help="Habitat Solver master prompt — show, render, validate goal")
+    pr_sub = pr.add_subparsers(dest="action", required=True)
+    r = pr_sub.add_parser("goal", help="Validate prompt goal checklist")
+    r.set_defaults(func=cmd_prompt, action="goal")
+    r = pr_sub.add_parser("vision", help="Print north-star vision")
+    r.set_defaults(func=cmd_prompt, action="vision")
+    r = pr_sub.add_parser("show", help="Render solver prompt with adaptive feedback")
+    r.add_argument("repo", nargs="?", help="owner/repo")
+    r.add_argument("--title", default="Fix README badges")
+    r.add_argument("--max-files", type=int, default=8)
+    r.add_argument("-o", "--output", help="Write rendered prompt to file")
+    r.set_defaults(func=cmd_prompt, action="show")
+    r = pr_sub.add_parser("triage", help="Render Customs triage prompt")
+    r.add_argument("--title", default="Add pytest smoke test")
+    r.add_argument("--body", default="")
+    r.set_defaults(func=cmd_prompt, action="triage")
 
     s = sub.add_parser("broadcast", help="Compose X post for merge or fleet stats")
     s.add_argument("repo", nargs="?", help="owner/repo for merge post")

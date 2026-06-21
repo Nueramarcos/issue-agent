@@ -12,3 +12,7 @@ skip_labels:
   - question
   - help wanted
   - architecture
+tower_enabled: true
+# Optional: override master prompt (default: issue-agent/prompts/habitat-solver.md)
+# prompt_path: /home/marcos/issue-agent/prompts/habitat-solver.md
+# triage_prompt_path: /home/marcos/issue-agent/prompts/customs-triage.md
