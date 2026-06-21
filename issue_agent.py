@@ -25,6 +25,10 @@ try:
 except ImportError:
     yaml = None  # type: ignore
 
+from broadcast import broadcast_merge, compose_fleet_post, compose_merge_post, save_broadcast
+from radar import enrich_opportunity
+from tower import TowerVerdict, tower_block_comment, tower_review_workspace
+
 HOME = Path.home()
 AGENT_ROOT = Path(os.environ.get("ISSUE_AGENT_ROOT", HOME / "issue-agent"))
 SECRETS = Path(os.environ.get("ISSUE_AGENT_SECRETS", HOME / ".config/cockpit/secrets.env"))
@@ -258,20 +262,30 @@ def detect_test_command(ws: Path, override: str | None) -> str | None:
 
 HABITAT_CACHE = Path(os.environ.get("ISSUE_AGENT_HABITATS", HOME / "agent-habitats"))
 
-SECRET_PATTERNS = [
-    re.compile(r"(?i)(api[_-]?key|secret|password|token|private[_-]?key)\s*[=:]\s*['\"]?[a-zA-Z0-9_\-./]{8,}"),
-    re.compile(r"-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----"),
-]
-JUNK_FILENAME_PREFIXES = ("python ", "cargo ", "npm ", "pip ", "make ")
 
-
-@dataclass
-class TowerVerdict:
-    passed: bool
-    confidence: str
-    reasons: list[str]
-    checks: dict[str, bool]
-    files_changed: list[str]
+def tower_review(
+    ws: Path,
+    repo: str,
+    cfg: RepoConfig,
+    *,
+    base_branch: str,
+    issue_summary: str = "",
+) -> TowerVerdict:
+    verdict = tower_review_workspace(
+        ws,
+        base_branch=base_branch,
+        max_files=cfg.max_files,
+        issue_summary=issue_summary,
+        on_log=lambda msg: log(f"{msg} [{repo}]"),
+    )
+    log_activity(
+        "tower_pass" if verdict.passed else "tower_reject",
+        repo,
+        f"{len(verdict.files_changed)} files, {verdict.confidence}",
+        files=verdict.files_changed[:20],
+        reasons=verdict.reasons[:5],
+    )
+    return verdict
 
 
 def detect_stack(ws: Path) -> str:
@@ -326,111 +340,6 @@ def bootstrap_habitat(ws: Path, repo: str) -> dict[str, Any]:
             log(f"habitat bootstrap warning (non-fatal): {out}")
     log_activity("habitat_ready", repo, stack, stack=stack, bootstrap_steps=len(spec.get("bootstrap") or []))
     return spec
-
-
-def changed_files(ws: Path, base_branch: str) -> list[str]:
-    run(["git", "fetch", "origin"], cwd=ws, check=False)
-    result = run(["git", "diff", "--name-only", f"origin/{base_branch}...HEAD"], cwd=ws, check=False)
-    if result.returncode != 0:
-        result = run(["git", "diff", "--name-only", "HEAD"], cwd=ws, check=False)
-    return [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
-
-
-def diff_text(ws: Path, base_branch: str) -> str:
-    run(["git", "fetch", "origin"], cwd=ws, check=False)
-    result = run(["git", "diff", f"origin/{base_branch}...HEAD"], cwd=ws, check=False)
-    if result.returncode != 0:
-        result = run(["git", "diff", "HEAD"], cwd=ws, check=False)
-    return (result.stdout or "") + (result.stderr or "")
-
-
-def tower_review(
-    ws: Path,
-    repo: str,
-    cfg: RepoConfig,
-    *,
-    base_branch: str,
-    issue_summary: str = "",
-) -> TowerVerdict:
-    """Tower gate — deterministic reviewer before push."""
-    reasons: list[str] = []
-    checks: dict[str, bool] = {}
-    files = changed_files(ws, base_branch)
-    diff = diff_text(ws, base_branch)
-
-    checks["has_changes"] = bool(files)
-    if not files:
-        reasons.append("No file changes to review")
-        return TowerVerdict(False, "high", reasons, checks, files)
-
-    checks["file_count"] = len(files) <= cfg.max_files
-    if len(files) > cfg.max_files:
-        reasons.append(f"Diff touches {len(files)} files (max {cfg.max_files}): {', '.join(files[:12])}")
-
-    forbidden = [f for f in files if f.endswith(".env") or f.split("/")[-1].startswith(".env")]
-    checks["no_env_files"] = not forbidden
-    if forbidden:
-        reasons.append(f"Forbidden env files in diff: {', '.join(forbidden)}")
-
-    junk = [f for f in files if any(f.startswith(p) for p in JUNK_FILENAME_PREFIXES)]
-    checks["no_junk_filenames"] = not junk
-    if junk:
-        reasons.append(f"Junk shell-command filenames: {', '.join(junk)}")
-
-    secret_hits: list[str] = []
-    for pat in SECRET_PATTERNS:
-        if pat.search(diff):
-            secret_hits.append(pat.pattern[:40])
-    checks["no_secrets"] = not secret_hits
-    if secret_hits:
-        reasons.append("Possible secrets/credentials detected in diff")
-
-    if len(diff) > 12000:
-        checks["diff_size"] = False
-        reasons.append(f"Diff too large ({len(diff)} chars) — likely drive-by refactor")
-    else:
-        checks["diff_size"] = True
-
-    py_files = [f for f in files if f.endswith(".py") and (ws / f).exists()]
-    if py_files:
-        ruff = run(["ruff", "check", "--select=E9,F821", *py_files], cwd=ws, check=False)
-        ruff_out = (ruff.stdout or "") + (ruff.stderr or "")
-        critical = [line for line in ruff_out.splitlines() if any(code in line for code in ("E9", "F821", "SyntaxError"))]
-        checks["ruff_critical"] = ruff.returncode == 0 or not critical
-        if critical and ruff.returncode != 0:
-            reasons.append(f"Ruff critical issues in {len(critical)} line(s)")
-    else:
-        checks["ruff_critical"] = True
-
-    passed = all(checks.values())
-    confidence = "high" if passed else "high"
-    if passed and len(files) <= 2 and checks.get("diff_size"):
-        confidence = "high"
-    elif passed:
-        confidence = "med"
-
-    detail = "PASS" if passed else "REJECT"
-    log(f"Tower {detail} {repo}: {len(files)} files, confidence={confidence}" + (f" — {issue_summary[:60]}" if issue_summary else ""))
-    log_activity(
-        "tower_pass" if passed else "tower_reject",
-        repo,
-        f"{len(files)} files, {confidence}",
-        files=files[:20],
-        reasons=reasons[:5],
-    )
-    return TowerVerdict(passed, confidence, reasons, checks, files)
-
-
-def tower_block_comment(verdict: TowerVerdict) -> str:
-    lines = ["🤖 **Issue Agent — Tower rejected this diff**", ""]
-    lines.extend(f"- {r}" for r in verdict.reasons)
-    if verdict.files_changed:
-        lines.append("")
-        lines.append("**Files changed:**")
-        lines.extend(f"- `{f}`" for f in verdict.files_changed[:15])
-    lines.append("")
-    lines.append(f"*Confidence: {verdict.confidence} · re-queue with agent-triage after adjusting scope*")
-    return "\n".join(lines)
 
 
 def workspace_for(repo: str, issue_num: int | None = None) -> Path:
@@ -1304,9 +1213,36 @@ def resolve_issue(repo: str, issue_num: int, *, dry_run: bool = False) -> int:
     log(f"done #{issue_num} -> {pr_url} (merged={merged})")
     if merged:
         record_success(repo, "issue", str(issue_num), spec_title=issue["title"])
+        _maybe_broadcast_merge(repo, issue_num=issue_num, pr_url=pr_url, title=issue["title"])
     else:
         record_failure(repo, "issue", str(issue_num), detail, issue_num=issue_num, spec_title=issue["title"])
     return 0 if merged else 1
+
+
+def _maybe_broadcast_merge(
+    repo: str,
+    *,
+    issue_num: int | None = None,
+    pr_url: str = "",
+    title: str = "",
+) -> None:
+    if os.environ.get("X_BROADCAST", "1").lower() in ("0", "false", "no"):
+        return
+    try:
+        result = broadcast_merge(
+            repo,
+            BROADCAST_DIR,
+            issue_num=issue_num,
+            pr_url=pr_url,
+            title=title,
+            auto_post=os.environ.get("X_AUTO_POST", "").lower() in ("1", "true", "yes"),
+        )
+        log(f"broadcast saved → {result['path']}")
+        if result.get("posted"):
+            log(f"broadcast X: {result.get('post_detail', 'ok')}")
+        log_activity("broadcast", repo, title[:60], pr_url=pr_url)
+    except Exception as exc:
+        log(f"broadcast skipped: {exc}")
 
 
 def cmd_solvability(args: argparse.Namespace) -> int:
@@ -1673,6 +1609,7 @@ AIRPORT_PID_DIR = LOG_DIR / "airport-pids"
 SOLVABILITY_STATE = AGENT_ROOT / "solvability.json"
 FLIGHT_RECORDER_DIR = AGENT_ROOT / "flight-recorder"
 FLIGHT_TRAJECTORIES = FLIGHT_RECORDER_DIR / "trajectories.jsonl"
+BROADCAST_DIR = AGENT_ROOT / "broadcasts"
 
 _SOLV_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 SOLV_CACHE_TTL_SECS = 90
@@ -3151,6 +3088,8 @@ def cmd_scout(args: argparse.Namespace) -> int:
         min_score=args.min_score,
         arch=args.arch,
     )
+    if getattr(args, "web", False):
+        items = [enrich_opportunity(item, web=True) for item in items]
     if args.limit:
         items = items[: args.limit]
 
@@ -4641,6 +4580,45 @@ def cmd_recorder(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_broadcast(args: argparse.Namespace) -> int:
+    load_secrets()
+    BROADCAST_DIR.mkdir(parents=True, exist_ok=True)
+
+    if args.fleet:
+        rows = _load_trajectories(200)
+        merges = sum(1 for r in rows if r.get("outcome") == "success")
+        repos = list({str(r.get("repo")) for r in rows if r.get("repo")})
+        text = compose_fleet_post(merges=merges, repos=repos)
+        path = save_broadcast(text, BROADCAST_DIR)
+        print(text)
+        print(f"\n→ {path}")
+        if args.post:
+            from broadcast import post_to_x
+
+            ok, detail = post_to_x(text)
+            print(detail)
+            return 0 if ok else 1
+        return 0
+
+    repo = args.repo or "Nueramarcos/issue-agent"
+    text = compose_merge_post(
+        repo,
+        issue_num=args.issue,
+        pr_url=args.pr_url or "",
+        title=args.title or "Issue Agent merge",
+    )
+    path = save_broadcast(text, BROADCAST_DIR)
+    print(text)
+    print(f"\n→ {path}")
+    if args.post:
+        from broadcast import post_to_x
+
+        ok, detail = post_to_x(text)
+        print(detail)
+        return 0 if ok else 1
+    return 0
+
+
 def cmd_tower(args: argparse.Namespace) -> int:
     load_secrets()
     base_ws = workspace_for(args.repo)
@@ -4777,6 +4755,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--min-score", type=int, default=0, help="Minimum score 0–100")
     s.add_argument("--limit", "-n", type=int, default=15, help="Max rows to print")
     s.add_argument("--live", action="store_true", help="Merge live GitHub search hits from upstream-opportunities.yaml")
+    s.add_argument("--web", action="store_true", help="Radar: enrich with GitHub precedents + web hints")
     s.add_argument("--live-limit", type=int, default=6, help="Max hits per live query")
     s.add_argument("--enqueue", type=int, metavar="N", help="Add top N visible items to scout-queue.json")
     s.add_argument("--json", action="store_true", help="Machine-readable output")
@@ -4896,6 +4875,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("failures", help="Show failure ledger and hints")
     s.set_defaults(func=lambda _: cmd_status(argparse.Namespace()) or 0)
+
+    s = sub.add_parser("broadcast", help="Compose X post for merge or fleet stats")
+    s.add_argument("repo", nargs="?", help="owner/repo for merge post")
+    s.add_argument("--issue", type=int, help="Issue number")
+    s.add_argument("--pr-url", default="", help="PR URL")
+    s.add_argument("--title", default="", help="Issue/fix title")
+    s.add_argument("--fleet", action="store_true", help="Overnight fleet summary from Flight Recorder")
+    s.add_argument("--post", action="store_true", help="Post to X (needs X_BEARER_TOKEN)")
+    s.set_defaults(func=cmd_broadcast)
 
     s = sub.add_parser("tower", help="Run Tower reviewer on a workspace diff")
     s.add_argument("repo", help="owner/repo")
