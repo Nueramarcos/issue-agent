@@ -1,7 +1,7 @@
 # Issue Agent defaults — override per repo with .issue-agent.yml
 
 model = "ollama/qwen2.5-coder:7b"
-triage_model = "qwen2.5-coder:1.5b"
+triage_model = "customs-1.5b"
 max_issues_per_run = 3
 max_aider_rounds = 3
 draft_pr = true

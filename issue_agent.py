@@ -25,7 +25,18 @@ try:
 except ImportError:
     yaml = None  # type: ignore
 
-from broadcast import broadcast_merge, compose_fleet_post, compose_merge_post, save_broadcast
+from broadcast import broadcast_merge, compose_fleet_post, compose_merge_post, post_to_x, save_broadcast
+from personality import (
+    QUESTIONS,
+    answers_code,
+    compose_quiz_post,
+    compose_quiz_thread,
+    compose_result_post,
+    format_result,
+    match_opportunity,
+    run_interactive_quiz,
+    tally_answers,
+)
 from lora_export import build_lora_dataset, export_lora_jsonl
 from prompt_loader import (
     DEFAULT_SOLVER,
@@ -67,7 +78,7 @@ def solver_prompt(
 class RepoConfig:
     repo: str
     model: str = "ollama/qwen2.5-coder:7b"
-    triage_model: str = "qwen2.5-coder:1.5b"
+    triage_model: str = "customs-1.5b"
     test_command: str | None = None
     max_files: int = 8
     draft_pr: bool = False
@@ -2877,13 +2888,30 @@ def discover_repo_issues(repo: str) -> list[dict[str, Any]]:
 
 def load_upstream_opportunities() -> dict[str, Any]:
     if not UPSTREAM_OPPORTUNITIES_FILE.exists() or not yaml:
-        return {"hardware": {}, "live_queries": [], "opportunities": []}
+        return {"hardware": {}, "live_queries": [], "opportunities": [], "excluded_repos": []}
     data = yaml.safe_load(UPSTREAM_OPPORTUNITIES_FILE.read_text()) or {}
     return {
         "hardware": data.get("hardware") or {},
         "live_queries": list(data.get("live_queries") or []),
         "opportunities": list(data.get("opportunities") or []),
+        "excluded_repos": list(data.get("excluded_repos") or []),
+        "excluded_reason": data.get("excluded_reason") or "",
     }
+
+
+def excluded_scout_repos(catalog: dict[str, Any] | None = None) -> set[str]:
+    cat = catalog or load_upstream_opportunities()
+    return {str(r).lower() for r in cat.get("excluded_repos") or []}
+
+
+def filter_excluded_scout_items(
+    items: list[dict[str, Any]],
+    catalog: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    blocked = excluded_scout_repos(catalog)
+    if not blocked:
+        return items
+    return [it for it in items if (it.get("repo") or "").lower() not in blocked]
 
 
 def load_scout_queue() -> list[dict[str, Any]]:
@@ -3036,10 +3064,13 @@ def next_scout_work() -> dict[str, Any] | None:
 def enqueue_scout_items(items: list[dict[str, Any]], *, max_n: int) -> int:
     queue = load_scout_queue()
     existing = {_scout_item_key(q) for q in queue}
+    blocked = excluded_scout_repos()
     added = 0
     for item in items:
         if added >= max_n:
             break
+        if (item.get("repo") or "").lower() in blocked:
+            continue
         key = _scout_item_key(item)
         if key in existing:
             continue
@@ -3086,6 +3117,7 @@ def cmd_scout(args: argparse.Namespace) -> int:
                 live_items.append(_live_issue_to_opportunity(hit, tags, hw))
 
     items = merge_scout_opportunities(curated, live_items)
+    items = filter_excluded_scout_items(items, catalog)
     items = filter_scout_opportunities(
         items,
         tag=args.tag,
@@ -3107,6 +3139,10 @@ def cmd_scout(args: argparse.Namespace) -> int:
         gpu = hw.get("gpu") or "any"
         arch = hw.get("arch") or "any"
         print(f"Upstream scout — {gpu} ({arch})\n")
+        excluded = excluded_scout_repos(catalog)
+        if excluded:
+            reason = catalog.get("excluded_reason") or ", ".join(sorted(excluded))
+            print(f"  excluded: {reason}\n")
         if args.live:
             print(f"  live search: {len(live_items)} hits merged\n")
         if queue:
@@ -3137,6 +3173,104 @@ def cmd_scout(args: argparse.Namespace) -> int:
         n = enqueue_scout_items(items, max_n=args.enqueue)
         print(f"Enqueued {n} item(s) → {SCOUT_QUEUE_FILE}")
 
+    return 0
+
+
+def cmd_personality(args: argparse.Namespace) -> int:
+    """Personality quiz → archetype → best scout opportunity; optional X broadcast."""
+    load_secrets()
+
+    if args.quiz_only:
+        if args.thread:
+            for i, post in enumerate(compose_quiz_thread(), 1):
+                print(f"--- tweet {i} ---\n{post}\n")
+        else:
+            print(compose_quiz_post())
+        return 0
+
+    catalog = load_upstream_opportunities()
+    hw = catalog.get("hardware") or {}
+    curated = list(catalog.get("opportunities") or [])
+    items = merge_scout_opportunities(curated, [])
+    items = filter_excluded_scout_items(items, catalog)
+    items = filter_scout_opportunities(
+        items,
+        tag=args.tag,
+        tier=args.tier,
+        min_score=0,
+        arch=args.arch,
+    )
+
+    if args.answers:
+        if len(args.answers) != len(QUESTIONS):
+            print(f"Need {len(QUESTIONS)} letters (one per question), e.g. abdca")
+            return 1
+        answers = {}
+        for q, letter in zip(QUESTIONS, args.answers.lower()):
+            if letter not in q["choices"]:
+                print(f"Invalid choice '{letter}' for: {q['prompt']}")
+                return 1
+            answers[q["id"]] = letter
+    elif args.interactive:
+        answers = run_interactive_quiz()
+    else:
+        answers = {
+            "friday": "d",
+            "test_output": "a",
+            "heartbreak": "d",
+            "patience": "a",
+            "workstation": "c",
+        }
+        print("No --answers or --interactive — using Marcos default profile (Vision Phantom, no tinygrad)\n")
+
+    scores = tally_answers(answers)
+    archetype_key, archetype, item, match_score = match_opportunity(items, scores)
+    code = answers_code(answers)
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "answers": answers,
+                    "answers_code": code,
+                    "scores": scores,
+                    "archetype_key": archetype_key,
+                    "archetype": archetype,
+                    "match_score": match_score,
+                    "item": item,
+                    "hardware": hw,
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    print(format_result(archetype_key, archetype, item, match_score, scores))
+
+    if args.enqueue:
+        n = enqueue_scout_items([item], max_n=1)
+        print(f"Enqueued target → {SCOUT_QUEUE_FILE} ({n} item)")
+
+    result_text = compose_result_post(archetype_key, archetype, item, answers_code=code)
+    path = save_broadcast(result_text, BROADCAST_DIR)
+    print(f"\nX draft → {path}")
+    if args.post:
+        if args.thread:
+            ok_all = True
+            for i, post in enumerate(compose_quiz_thread(), 1):
+                ok, detail = post_to_x(post)
+                print(f"tweet {i}: {detail}")
+                ok_all = ok_all and ok
+            ok, detail = post_to_x(result_text)
+            print(f"result: {detail}")
+            return 0 if ok_all and ok else 1
+        ok, detail = post_to_x(result_text if not args.quiz_first else compose_quiz_post())
+        print(detail)
+        if args.quiz_first and ok:
+            ok2, detail2 = post_to_x(result_text)
+            print(f"result: {detail2}")
+            return 0 if ok2 else 1
+        return 0 if ok else 1
     return 0
 
 
@@ -4581,6 +4715,23 @@ def cmd_recorder(args: argparse.Namespace) -> int:
     return 0
 
 
+def backfill_flight_recorder(*, with_gh: bool = True, limit: int = 50) -> int:
+    """Seed trajectories.jsonl from ledger, activity, and merged PRs."""
+    seen: set[str] = set()
+    for row in _load_trajectories():
+        seen.add(json.dumps(row, sort_keys=True, default=str))
+    added = 0
+    for row in _collect_training_rows(with_gh=with_gh, limit=limit):
+        key = json.dumps(row, sort_keys=True, default=str)
+        if key in seen:
+            continue
+        append_flight_record(row)
+        seen.add(key)
+        added += 1
+    log(f"Flight Recorder backfill: +{added} trajectory(ies) → {FLIGHT_TRAJECTORIES}")
+    return added
+
+
 def _collect_training_rows(*, with_gh: bool = False, limit: int = 50) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = list(_load_trajectories())
     for key, entry in load_failure_ledger().get("items", {}).items():
@@ -4647,6 +4798,59 @@ def cmd_lora(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_loop(args: argparse.Namespace) -> int:
+    """Vision loop — backfill, LoRA export, solvability, fleet pass."""
+    load_secrets()
+    rounds = args.rounds
+    rc = 0
+    print(f"Habitat Solver vision loop — {rounds} round(s)\n")
+
+    for n in range(1, rounds + 1):
+        log(f"vision loop round {n}/{rounds}")
+        backfill_flight_recorder(with_gh=True, limit=args.limit)
+        rows = _collect_training_rows(with_gh=True, limit=args.limit)
+        out = FLIGHT_RECORDER_DIR / "lora-dataset.jsonl"
+        export_lora_jsonl(rows, out)
+        save_solvability_snapshot()
+        reconcile_seed_blocks_from_failures()
+
+        if args.triage:
+            for entry in load_repos_config_raw()[:3]:
+                repo = entry.get("name")
+                if not repo or not repo_has_issues(repo):
+                    continue
+                issues = gh_json(["issue", "list", "-R", repo, "--label", "agent-triage", "--json", "number", "--limit", "3"])
+                for iss in issues[:1]:
+                    cfg = repo_config(repo, workspace_for(repo))
+                    t = triage_issue(repo, iss["number"], cfg)
+                    print(f"  Customs {repo} #{iss['number']}: {t.get('complexity')} / {t.get('actionable')}")
+
+        if args.fix:
+            for entry in load_repos_config_raw()[:2]:
+                repo = entry.get("name")
+                if not repo or not repo_has_issues(repo):
+                    continue
+                issues = gh_json(["issue", "list", "-R", repo, "--label", "agent-triage", "--json", "number", "--limit", "1"])
+                if issues:
+                    fix_rc = resolve_issue(repo, issues[0]["number"], dry_run=args.dry_run)
+                    rc |= fix_rc
+
+        if args.boost:
+            ns = argparse.Namespace(max=args.max_per_repo, seed=False, dry_run=args.dry_run)
+            rc |= cmd_boost(ns)
+
+    traj_n = len(_load_trajectories())
+    lora_n = len(build_lora_dataset(_collect_training_rows(with_gh=True, limit=args.limit)))
+    inv = prompt_inventory(AGENT_ROOT)
+    print(f"\nloop complete:")
+    print(f"  trajectories: {traj_n}")
+    print(f"  lora examples: {lora_n}")
+    print(f"  prompt goal: {'MET' if inv.get('goal_met') else 'NOT MET'}")
+    if traj_n >= 50 and lora_n >= 50 and inv.get("goal_met"):
+        print("\n  VISION LOOP HEALTHY — self-improving cycle active")
+    return rc
+
+
 def cmd_prompt(args: argparse.Namespace) -> int:
     action = args.action
     if action == "goal":
@@ -4691,8 +4895,10 @@ def cmd_broadcast(args: argparse.Namespace) -> int:
     BROADCAST_DIR.mkdir(parents=True, exist_ok=True)
 
     if args.fleet:
-        rows = _load_trajectories(200)
-        merges = sum(1 for r in rows if r.get("outcome") == "success")
+        rows = _load_trajectories(500)
+        merges = sum(
+            1 for r in rows if r.get("outcome") in ("success", "merged_pr")
+        )
         repos = list({str(r.get("repo")) for r in rows if r.get("repo")})
         text = compose_fleet_post(merges=merges, repos=repos)
         path = save_broadcast(text, BROADCAST_DIR)
@@ -4867,6 +5073,27 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--json", action="store_true", help="Machine-readable output")
     s.set_defaults(func=cmd_scout)
 
+    s = sub.add_parser(
+        "personality",
+        help="Personality quiz → OSS archetype + scout target (optional X post)",
+    )
+    s.add_argument(
+        "--answers",
+        metavar="CODE",
+        help="5-letter answer code e.g. abdca (friday→workstation order)",
+    )
+    s.add_argument("-i", "--interactive", action="store_true", help="Run quiz in terminal")
+    s.add_argument("--tier", type=int, help="Filter scout pool by max tier")
+    s.add_argument("--tag", help="Filter scout pool by tag")
+    s.add_argument("--arch", help="Filter scout pool by hardware arch (e.g. gfx1010)")
+    s.add_argument("--enqueue", action="store_true", help="Queue matched issue in scout-queue.json")
+    s.add_argument("--quiz-only", action="store_true", help="Print quiz for X (no match)")
+    s.add_argument("--thread", action="store_true", help="Full thread (6 tweets) instead of single post")
+    s.add_argument("--post", action="store_true", help="Post to X (needs X_BEARER_TOKEN)")
+    s.add_argument("--quiz-first", action="store_true", help="With --post: quiz intro then result")
+    s.add_argument("--json", action="store_true", help="JSON output")
+    s.set_defaults(func=cmd_personality)
+
     s = sub.add_parser("hunt", help="Next scout-queue item + upstream PR playbook")
     s.add_argument("--enqueue", type=int, metavar="N", help="Seed tier-1 queue if empty, then show next")
     s.add_argument("--mark", choices=["queued", "in_progress", "pr_open", "done", "skipped"])
@@ -5026,6 +5253,26 @@ def build_parser() -> argparse.ArgumentParser:
     r = rec_sub.add_parser("tail", help="Show recent trajectory lines")
     r.add_argument("--limit", type=int, default=20)
     r.set_defaults(func=cmd_recorder, action="tail")
+
+    s = sub.add_parser("loop", help="Vision loop — backfill, LoRA, solvability, optional fix/boost")
+    s.add_argument("--rounds", type=int, default=1, help="Loop iterations")
+    s.add_argument("--limit", type=int, default=50, help="Max GH rows per round")
+    s.add_argument("--boost", action="store_true", help="Run boost pass each round")
+    s.add_argument("--fix", action="store_true", help="Attempt one agent-triage fix per repo")
+    s.add_argument("--triage", action="store_true", help="Run Customs triage sample each round")
+    s.add_argument("--dry-run", action="store_true")
+    s.add_argument("--max-per-repo", type=int, default=1)
+    s.set_defaults(func=cmd_loop)
+
+    s = sub.add_parser("backfill", help="Seed trajectories.jsonl from ledger + GH merges")
+    s.add_argument("--limit", type=int, default=50)
+    s.set_defaults(
+        func=lambda a: (
+            load_secrets(),
+            print(f"backfilled {backfill_flight_recorder(with_gh=True, limit=a.limit)} trajectory(ies)"),
+            0,
+        )[-1]
+    )
 
     lora = sub.add_parser("lora", help="LoRA instruction dataset from Flight Recorder")
     lora_sub = lora.add_subparsers(dest="action", required=True)
