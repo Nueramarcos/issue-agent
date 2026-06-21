@@ -25,7 +25,16 @@ try:
 except ImportError:
     yaml = None  # type: ignore
 
-from broadcast import broadcast_merge, compose_fleet_post, compose_merge_post, post_to_x, save_broadcast
+from broadcast import (
+    broadcast_merge,
+    compose_fleet_post,
+    compose_merge_post,
+    open_x_compose,
+    post_to_x,
+    save_broadcast,
+    x_compose_url,
+    _oauth1_ready,
+)
 from personality import (
     QUESTIONS,
     answers_code,
@@ -4894,6 +4903,17 @@ def cmd_broadcast(args: argparse.Namespace) -> int:
     load_secrets()
     BROADCAST_DIR.mkdir(parents=True, exist_ok=True)
 
+    if getattr(args, "status", False):
+        print("X broadcast status\n")
+        print(f"  OAuth 1.0a ready: {_oauth1_ready()}")
+        print(f"  X_AUTO_POST: {os.environ.get('X_AUTO_POST', '0')}")
+        print(f"  X_BROADCAST: {os.environ.get('X_BROADCAST', '1')}")
+        print(f"  latest post: {BROADCAST_DIR / 'latest.txt'}")
+        if not _oauth1_ready():
+            print("\n  Setup: setup-x-post")
+            print("  No API: issue-agent broadcast --fleet --open")
+        return 0
+
     if args.fleet:
         rows = _load_trajectories(500)
         merges = sum(
@@ -4904,12 +4924,17 @@ def cmd_broadcast(args: argparse.Namespace) -> int:
         path = save_broadcast(text, BROADCAST_DIR)
         print(text)
         print(f"\n→ {path}")
+        if args.open:
+            ok, detail = open_x_compose(text)
+            print(f"compose: {detail}" if ok else f"open failed: {detail}")
         if args.post:
-            from broadcast import post_to_x
-
             ok, detail = post_to_x(text)
             print(detail)
+            if not ok and args.open:
+                return 1
             return 0 if ok else 1
+        if args.open:
+            return 0
         return 0
 
     repo = args.repo or "Nueramarcos/issue-agent"
@@ -4922,12 +4947,16 @@ def cmd_broadcast(args: argparse.Namespace) -> int:
     path = save_broadcast(text, BROADCAST_DIR)
     print(text)
     print(f"\n→ {path}")
+    if args.open:
+        ok, detail = open_x_compose(text)
+        print(f"compose: {detail}" if ok else f"open failed: {detail}")
     if args.post:
-        from broadcast import post_to_x
-
         ok, detail = post_to_x(text)
         print(detail)
         return 0 if ok else 1
+    if args.open:
+        return 0
+    print(f"\ncompose URL: {x_compose_url(text)}")
     return 0
 
 
@@ -5232,7 +5261,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--pr-url", default="", help="PR URL")
     s.add_argument("--title", default="", help="Issue/fix title")
     s.add_argument("--fleet", action="store_true", help="Overnight fleet summary from Flight Recorder")
-    s.add_argument("--post", action="store_true", help="Post to X (needs X_BEARER_TOKEN)")
+    s.add_argument("--post", action="store_true", help="Post to X via API (needs setup-x-post)")
+    s.add_argument("--open", action="store_true", help="Open X compose in browser (no API keys)")
+    s.add_argument("--status", action="store_true", help="Show X credential / auto-post status")
     s.set_defaults(func=cmd_broadcast)
 
     s = sub.add_parser("tower", help="Run Tower reviewer on a workspace diff")
