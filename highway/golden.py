@@ -72,8 +72,24 @@ def apply_golden(handler: str, ws: Path, issue: dict[str, Any], repo_meta: dict[
         tests_dir = ws / "tests"
         tests_dir.mkdir(parents=True, exist_ok=True)
         req = ws / "requirements-dev.txt"
-        if not req.exists() and (ws / "pyproject.toml").exists():
+        if not req.exists():
             req.write_text("pytest>=7.0\n", encoding="utf-8")
+        if "value" in text and (ws / "micrograd").is_dir():
+            target = tests_dir / "test_value.py"
+            if not target.exists():
+                target.write_text(
+                    textwrap.dedent(
+                        """\
+                        from micrograd.engine import Value
+
+
+                        def test_value_add():
+                            assert Value(2.0) + Value(3.0) == Value(5.0)
+                        """
+                    ),
+                    encoding="utf-8",
+                )
+                return True
         candidates = [
             tests_dir / "test_import.py",
             tests_dir / "test_smoke.py",

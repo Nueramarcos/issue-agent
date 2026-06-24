@@ -70,7 +70,7 @@ from highway import (
     spec_highway_lane,
 )
 from highway.archetype import detect_archetype
-from highway.bottlenecks import analyze_bottlenecks, format_bottleneck_report, heal_stale_blocks
+from highway.bottlenecks import analyze_bottlenecks, format_bottleneck_report, heal_stale_blocks, revive_repo
 from highway.satisfied import issue_already_satisfied
 from radar import enrich_opportunity
 from tower import TowerVerdict, tower_block_comment, tower_review_workspace
@@ -1689,6 +1689,13 @@ def cmd_highway(args: argparse.Namespace) -> int:
     if args.action == "heal":
         result = heal_stale_blocks(min_highway_wins=args.min_wins)
         print(f"healed {result['cleared']} failure blocks across {result['repos_with_wins']} warm repos")
+        return 0
+    if args.action == "revive":
+        result = revive_repo(args.repo)
+        print(f"revived {result['repo']}: cleared {result['cleared']} failure-ledger entries")
+        _SOLV_CACHE.pop(args.repo, None)
+        solv = compute_repo_solvability(args.repo, use_cache=False)
+        print(f"  score={solv['score']} tier={solv['tier']} factory_max={solv['factory_max']}")
         return 0
     if args.action == "lanes":
         backlog = load_collector_backlog()
@@ -3950,7 +3957,7 @@ def cmd_max(args: argparse.Namespace) -> int:
 def cmd_local(args: argparse.Namespace) -> int:
     load_secrets()
     run(["gh", "auth", "setup-git"], check=False)
-    return process_local_queue(max_items=args.max)
+    return process_local_queue(max_items=args.max, repo_filter=args.repo)
 
 
 def failed_runs_on_branch(repo: str, *, limit: int = 3) -> list[dict[str, Any]]:
@@ -4941,6 +4948,28 @@ def resolve_issue_local(
         log(f"DRY RUN — would fix local task in {repo} on branch {branch}")
         return 0
 
+    issue = {"title": title, "body": body}
+    known_fix = False
+    applied_l0 = False
+    applied_l1 = False
+    applied_l0, hw_plan = _try_highway_lane0(ws, repo, issue)
+    if applied_l0:
+        log("local highway L0 applied")
+        run(["git", "add", "-A"], cwd=ws, check=False)
+        run(["git", "commit", "-m", title[:72]], cwd=ws, check=False)
+        known_fix = True
+    elif hw_plan and hw_plan.lane in (0, 1) and issue_already_satisfied(ws, issue, hw_plan):
+        log(f"local highway already satisfied — {hw_plan.archetype}")
+        record_success(repo, "local", title[:80], spec_title=title)
+        return 0
+    else:
+        applied_l1, hw_plan = _try_highway_lane1(ws, repo, issue)
+        if applied_l1:
+            log("local highway L1 applied")
+            run(["git", "add", "-A"], cwd=ws, check=False)
+            run(["git", "commit", "-m", title[:72]], cwd=ws, check=False)
+            known_fix = True
+
     aider_msg = textwrap.dedent(
         f"""
         {solver_prompt(repo, title, cfg)}
@@ -4951,8 +4980,9 @@ def resolve_issue_local(
         """
     ).strip()
 
-    known_fix = try_known_local_repair(ws, repo, title, body)
-    if known_fix:
+    if not known_fix:
+        known_fix = try_known_local_repair(ws, repo, title, body)
+    if known_fix and not applied_l0 and not applied_l1:
         run(["git", "add", "-A"], cwd=ws, check=False)
         run(["git", "commit", "-m", title[:72]], cwd=ws, check=False)
         log(f"known local repair applied for {repo}")
@@ -5645,7 +5675,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("local", help="Fix local queue (tinygrad/vision forks)")
     s.add_argument("--max", type=int, default=6)
-    s.set_defaults(func=cmd_local)
+    s.add_argument("--repo", help="Only process this owner/repo")
+    s.set_defaults(func=cmd_local, repo=None)
 
     s = sub.add_parser("build", help="Polish + collect + fix all repos incl. local forks")
     s.add_argument("repo", nargs="?")
@@ -5748,6 +5779,9 @@ def build_parser() -> argparse.ArgumentParser:
     r = hw_sub.add_parser("heal", help="Clear stale failure blocks on highway-warm repos")
     r.add_argument("--min-wins", type=int, default=2)
     r.set_defaults(func=cmd_highway, action="heal")
+    r = hw_sub.add_parser("revive", help="Reset failure ledger for one repo (demo revival)")
+    r.add_argument("repo", help="owner/repo")
+    r.set_defaults(func=cmd_highway, action="revive")
 
     s = sub.add_parser("failures", help="Show failure ledger and hints")
     s.set_defaults(func=lambda _: cmd_status(argparse.Namespace()) or 0)

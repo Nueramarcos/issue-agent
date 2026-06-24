@@ -23,14 +23,14 @@ def detect_archetype(title: str, body: str = "") -> str:
         return "gitignore"
     if "py.typed" in text:
         return "py_typed"
-    if "requirements-dev" in text or "requirements_dev" in text:
-        return "requirements_dev"
     if "__version__" in text or "version constant" in text or "version export" in text:
         return "version"
-    if "readme" in text or "badge" in text or "shield" in text:
-        return "readme"
     if "smoke" in text or ("pytest" in text and "test_" in text):
         return "smoke_tests"
+    if "requirements-dev" in text or "requirements_dev" in text:
+        return "requirements_dev"
+    if "readme" in text or "badge" in text or "shield" in text:
+        return "readme"
     if "template" in text or "issue and pr" in text:
         return "templates"
     if "ci" in text or "workflow" in text or "github actions" in text:

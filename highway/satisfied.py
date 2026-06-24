@@ -31,8 +31,12 @@ def issue_already_satisfied(ws: Path, issue: dict[str, Any], plan: HighwayPlan) 
         return True
     if arch == "requirements_dev" and (ws / "requirements-dev.txt").exists():
         return True
-    if arch == "smoke_tests" and (ws / "tests").is_dir() and list((ws / "tests").glob("test_*.py")):
-        return True
+    if arch == "smoke_tests":
+        tests = ws / "tests"
+        if tests.is_dir() and list(tests.glob("test_*.py")):
+            if "value" in text:
+                return (tests / "test_value.py").exists()
+            return True
     if arch == "templates" and (ws / ".github" / "ISSUE_TEMPLATE").is_dir():
         return True
     if arch == "readme" and ("badge" in text or "shield" in text):

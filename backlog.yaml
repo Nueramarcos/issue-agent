@@ -1,4 +1,26 @@
 repos:
+  Nueramarcos/agent-habitat-demo:
+  - title: Add habitat package __version__ constant
+    body: 'Add __version__ = "0.1.0" to habitat/__init__.py if missing.
+
+      habitat/__init__.py only.
+
+      '
+    labels:
+    - agent-triage
+    - enhancement
+    - good first issue
+    highway_lane: 0
+  - title: Add pytest smoke test for habitat calc
+    body: 'Add tests/test_habitat_import.py importing habitat.calc.
+
+      Must pass python3 -m pytest -q.
+
+      '
+    labels:
+    - agent-triage
+    - enhancement
+    highway_lane: 0
   Nueramarcos/orion-ai-agent:
   - title: Add CONTRIBUTING.md with dev setup steps
     body: 'Create CONTRIBUTING.md with: clone, venv setup, pip install -e .,

@@ -69,11 +69,13 @@ def analyze_bottlenecks(hours: int = 168) -> dict[str, Any]:
         "aider_attempts": hw["aider_attempts"],
         "aider_no_commits_est_pct": aider_fail_rate,
         "highway_wins_48h": wins,
-        "top_actions": _recommendations(kinds, hw, blocked),
+        "top_actions": _recommendations(kinds, hw, blocked, repos),
     }
 
 
-def _recommendations(kinds: Counter, hw: dict[str, Any], blocked: int) -> list[str]:
+def _recommendations(
+    kinds: Counter, hw: dict[str, Any], blocked: int, repos: Counter
+) -> list[str]:
     actions: list[str] = []
     if kinds.get("no_commits", 0) >= 5:
         actions.append("Route smoke_tests/ci_workflow/templates to L0 golden handlers (Phase 6)")
@@ -83,7 +85,13 @@ def _recommendations(kinds: Counter, hw: dict[str, Any], blocked: int) -> list[s
         actions.append("Run: issue-agent highway heal — decay stale failure blocks")
     if kinds.get("test_fail", 0) >= 3:
         actions.append("Fix test_command / doc-only skip for markdown-only diffs")
+    demo_failures = repos.get("Nueramarcos/agent-habitat-demo", 0)
+    if demo_failures >= 3:
+        actions.append(
+            f"Run: issue-agent highway revive Nueramarcos/agent-habitat-demo — {demo_failures} failures"
+        )
     if not actions:
+    if not any("revive" in a for a in actions):
         actions.append("Fleet healthy — enable L2 selectively on warm repos")
     return actions
 
@@ -112,6 +120,27 @@ def format_bottleneck_report(data: dict[str, Any]) -> str:
     for a in data.get("top_actions", []):
         lines.append(f"    • {a}")
     return "\n".join(lines)
+
+
+def revive_repo(repo: str, *, keep_permanent: bool = True) -> dict[str, int]:
+    """Clear failure-ledger entries for one repo to reset solvability."""
+    if not FAILURE_LEDGER.exists():
+        return {"cleared": 0, "repo": repo}
+    state = json.loads(FAILURE_LEDGER.read_text())
+    items = state.setdefault("items", {})
+    cleared = 0
+    for key in list(items.keys()):
+        entry = items[key]
+        if entry.get("repo") != repo:
+            continue
+        if keep_permanent and str(entry.get("skip_until", "")).startswith("2099"):
+            continue
+        del items[key]
+        cleared += 1
+    if cleared:
+        state["ts"] = datetime.now(timezone.utc).isoformat()
+        FAILURE_LEDGER.write_text(json.dumps(state, indent=2))
+    return {"cleared": cleared, "repo": repo}
 
 
 def heal_stale_blocks(*, min_highway_wins: int = 2) -> dict[str, int]:

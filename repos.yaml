@@ -131,6 +131,11 @@ repos:
       python3 -c "import sys; sys.path.insert(0,'.'); from micrograd.engine import Value; print(Value(1.0).data)"
     wait_for_checks: false
     park_minutes: 5
+    highway:
+      package_root: micrograd
+      l0_enabled: true
+      l1_enabled: true
+      l2_enabled: false
 
   - name: Nueramarcos/mlx
     branch: main
