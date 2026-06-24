@@ -12,7 +12,8 @@ from typing import Any
 from human_reviewer.export import INSTRUCTION, load_corpus, row_to_example
 
 AGENT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_MODEL = "customs-reviewer-1.5b"
+DEFAULT_MODEL = "customs-reviewer-ft-1.5b"
+FALLBACK_MODEL = "customs-reviewer-1.5b"
 
 
 @dataclass
@@ -115,6 +116,16 @@ def _changed_files(ws: Path, base_branch: str = "main") -> list[str]:
     return [ln.strip() for ln in (result.stdout or "").splitlines() if ln.strip()]
 
 
+def _resolve_model(model: str) -> str:
+    result = subprocess.run(["ollama", "list"], capture_output=True, text=True, check=False)
+    names = result.stdout or ""
+    if model in names or f"{model}:" in names:
+        return model
+    if FALLBACK_MODEL in names or f"{FALLBACK_MODEL}:" in names:
+        return FALLBACK_MODEL
+    return "qwen2.5-coder:1.5b"
+
+
 def human_tower_review(
     ws: Path,
     repo: str,
@@ -124,6 +135,7 @@ def human_tower_review(
     model: str = DEFAULT_MODEL,
     k: int = 3,
 ) -> HumanTowerVerdict:
+    model = _resolve_model(model)
     files = _changed_files(ws, base_branch)
     diff = _diff_excerpt(ws, base_branch)
     similar = _similar_examples(repo, files, issue_summary, k=k)

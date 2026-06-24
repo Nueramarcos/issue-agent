@@ -8,3 +8,7 @@ source "$HOME/.config/cockpit/secrets.env" 2>/dev/null || true
 issue-agent-loop --rounds 1 --triage --limit 50
 issue-agent-lora export --with-gh
 issue-agent prompt goal >/dev/null && echo "prompt goal OK"
+# Monthly Human Reviewer refresh (1st of month)
+if [[ "$(date +%d)" == "01" ]]; then
+  bash "$ISSUE_AGENT_ROOT/scripts/human-review-monthly.sh" || true
+fi

@@ -101,6 +101,8 @@ class RepoConfig:
     )
     trigger_label: str = "agent-triage"
     tower_enabled: bool = True
+    human_tower_enabled: bool = True
+    human_tower_model: str = "customs-reviewer-ft-1.5b"
     prompt_path: str | None = None
     triage_prompt_path: str | None = None
 
@@ -288,6 +290,10 @@ def repo_config(repo: str, ws: Path) -> RepoConfig:
         cfg.ci_workflows = list(meta["ci_workflows"])
     if "tower_enabled" in meta:
         cfg.tower_enabled = bool(meta["tower_enabled"])
+    if "human_tower_enabled" in meta:
+        cfg.human_tower_enabled = bool(meta["human_tower_enabled"])
+    if meta.get("human_tower_model"):
+        cfg.human_tower_model = str(meta["human_tower_model"])
     if meta.get("prompt_path"):
         cfg.prompt_path = str(meta["prompt_path"])
     if meta.get("triage_prompt_path"):
@@ -310,6 +316,10 @@ def repo_config(repo: str, ws: Path) -> RepoConfig:
                 cfg.skip_labels = list(data["skip_labels"])
             if "tower_enabled" in data:
                 cfg.tower_enabled = bool(data["tower_enabled"])
+            if "human_tower_enabled" in data:
+                cfg.human_tower_enabled = bool(data["human_tower_enabled"])
+            if data.get("human_tower_model"):
+                cfg.human_tower_model = str(data["human_tower_model"])
             if data.get("prompt_path"):
                 cfg.prompt_path = str(data["prompt_path"])
             if data.get("triage_prompt_path"):
@@ -367,6 +377,49 @@ def tower_review(
         f"{len(verdict.files_changed)} files, {verdict.confidence}",
         files=verdict.files_changed[:20],
         reasons=verdict.reasons[:5],
+    )
+    return verdict
+
+
+def human_tower_gate(
+    ws: Path,
+    repo: str,
+    cfg: RepoConfig,
+    *,
+    base_branch: str,
+    issue_summary: str = "",
+    issue_num: int | None = None,
+) -> Any:
+    """Maintainer-voice gate — corpus RAG + customs-reviewer model."""
+    if not cfg.human_tower_enabled:
+        return None
+    if os.environ.get("HUMAN_TOWER", "1") == "0":
+        return None
+    try:
+        from human_reviewer.gate import human_tower_review
+        from human_reviewer.record import append_human_tower_record, human_tower_block_comment
+    except ImportError:
+        log("Human Tower unavailable — skip (human_reviewer module missing)")
+        return None
+    verdict = human_tower_review(
+        ws,
+        repo,
+        issue_summary=issue_summary,
+        base_branch=base_branch,
+        model=cfg.human_tower_model,
+    )
+    append_human_tower_record(verdict, repo=repo, issue_num=issue_num, issue_summary=issue_summary)
+    log_activity(
+        "human_tower_pass" if verdict.passed else "human_tower_reject",
+        repo,
+        verdict.review_comment[:120] or "; ".join(verdict.reasons[:2]),
+        model=verdict.model,
+        confidence=verdict.confidence,
+    )
+    verdict._block_comment = human_tower_block_comment  # type: ignore[attr-defined]
+    log(
+        f"Human Tower {'PASS' if verdict.passed else 'REJECT'} "
+        f"({verdict.confidence}) [{repo}] — {verdict.review_comment[:80]}"
     )
     return verdict
 
@@ -1245,6 +1298,31 @@ def resolve_issue(repo: str, issue_num: int, *, dry_run: bool = False) -> int:
                 "files": verdict.files_changed,
             }
         )
+
+    ht = human_tower_gate(
+        ws,
+        repo,
+        cfg,
+        base_branch=base,
+        issue_summary=issue.get("title", ""),
+        issue_num=issue_num,
+    )
+    if ht is not None and not ht.passed:
+        block_fn = getattr(ht, "_block_comment", None)
+        body = block_fn(ht) if callable(block_fn) else ht.review_comment
+        run(
+            ["gh", "issue", "comment", str(issue_num), "-R", repo, "--body", body],
+            check=False,
+        )
+        record_failure(
+            repo,
+            "issue",
+            str(issue_num),
+            "human tower rejected: " + (ht.review_comment or "; ".join(ht.reasons))[:400],
+            issue_num=issue_num,
+            spec_title=issue["title"],
+        )
+        return 1
 
     # push + draft PR
     run(["git", "push", "-u", "origin", branch, "--force-with-lease"], cwd=ws, check=False)

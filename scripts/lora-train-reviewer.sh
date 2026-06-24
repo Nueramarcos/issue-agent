@@ -15,11 +15,10 @@ if [[ "$N" -lt 50 ]]; then
   exit 1
 fi
 
-echo "Human Reviewer LoRA train — $N examples"
+echo "Human Reviewer train — $N examples"
 echo "  data: $DATA"
-echo "  out:  $OUT"
+export PYTHONPATH="$ROOT"
+python3 "$ROOT/scripts/train_reviewer_lora.py"
 echo ""
-echo "Plug your trainer here (unsloth recommended on this workstation):"
-echo "  python3 $ROOT/scripts/train_reviewer_lora.py  # TODO: add when GPU schedule allows"
-echo ""
-echo "Until fine-tune ships, Human Tower uses RAG + customs-reviewer-1.5b base prompt."
+echo "Human Tower model: customs-reviewer-ft-1.5b"
+echo "Optional GPU LoRA later: pip install unsloth torch && python3 $ROOT/scripts/lora_unsloth.py"

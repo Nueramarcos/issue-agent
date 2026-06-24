@@ -24,9 +24,9 @@ def load_corpus(path: Path | None = None) -> list[dict[str, Any]]:
     if not src.exists():
         return []
     rows: list[dict[str, Any]] = []
-    for line in src.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
+    for raw in src.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or not line.startswith("{"):
             continue
         try:
             rows.append(json.loads(line))

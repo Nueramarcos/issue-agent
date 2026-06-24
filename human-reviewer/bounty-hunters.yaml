@@ -1,11 +1,56 @@
-# Curated bounty hunters and trusted contributors — expand as you discover voices.
 authors:
-  - login: syb0rg
-    note: tinygrad bounty hunter (test_sum / Mac perf)
-  - login: geohot
-    note: tinygrad maintainer — direct review style
-  - login: dmlc
-    note: mlx / ML OSS contributor pattern
-
-# Optional: only collect PRs authored by these logins (empty = all authors)
+- login: syb0rg
+  note: tinygrad bounty hunter (test_sum / Mac perf)
+- login: geohot
+  note: "tinygrad maintainer \u2014 direct review style"
+- login: dmlc
+  note: mlx / ML OSS contributor pattern
+- login: NicolasHug
+  note: 'corpus: 19 merged PR(s) with maintainer discourse'
+- login: chenyuxyz
+  note: 'corpus: 18 merged PR(s) with maintainer discourse'
+- login: jorenham
+  note: 'corpus: 11 merged PR(s) with maintainer discourse'
+- login: Viicos
+  note: 'corpus: 9 merged PR(s) with maintainer discourse'
+- login: tiangolo
+  note: 'corpus: 8 merged PR(s) with maintainer discourse'
+- login: app/dependabot
+  note: 'corpus: 7 merged PR(s) with maintainer discourse'
+- login: jacobtylerwalls
+  note: 'corpus: 6 merged PR(s) with maintainer discourse'
+- login: pitrou
+  note: 'corpus: 6 merged PR(s) with maintainer discourse'
+- login: zcbenz
+  note: 'corpus: 6 merged PR(s) with maintainer discourse'
+- login: pytorchbot
+  note: 'corpus: 5 merged PR(s) with maintainer discourse'
+- login: adamchainz
+  note: 'corpus: 5 merged PR(s) with maintainer discourse'
+- login: Reranko05
+  note: 'corpus: 5 merged PR(s) with maintainer discourse'
+- login: raulcd
+  note: 'corpus: 5 merged PR(s) with maintainer discourse'
+- login: Pablosinyores
+  note: 'corpus: 5 merged PR(s) with maintainer discourse'
+- login: SLTozer
+  note: 'corpus: 4 merged PR(s) with maintainer discourse'
+- login: nateprewitt
+  note: 'corpus: 4 merged PR(s) with maintainer discourse'
+- login: jdonszelmann
+  note: 'corpus: 4 merged PR(s) with maintainer discourse'
+- login: sundb
+  note: 'corpus: 4 merged PR(s) with maintainer discourse'
+- login: sggeorgiev
+  note: 'corpus: 4 merged PR(s) with maintainer discourse'
+- login: obchain
+  note: 'corpus: 4 merged PR(s) with maintainer discourse'
+- login: nimlgen
+  note: 'corpus: 3 merged PR(s) with maintainer discourse'
+- login: ngoldbaum
+  note: 'corpus: 3 merged PR(s) with maintainer discourse'
+- login: JonathanBrouwer
+  note: 'corpus: 3 merged PR(s) with maintainer discourse'
+- login: thisisnic
+  note: 'corpus: 3 merged PR(s) with maintainer discourse'
 filter_authors_only: false
