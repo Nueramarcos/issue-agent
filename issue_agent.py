@@ -602,6 +602,25 @@ def _try_doc_template_fix(ws: Path, issue: dict[str, Any]) -> bool:
             target.write_text(f"habitat/ @{owner}\n", encoding="utf-8")
             return True
 
+    if "security.md" in title or "security.md" in body or "vulnerability reporting" in body:
+        target = ws / "SECURITY.md"
+        if not target.exists():
+            owner = os.environ.get("HABITAT_GITHUB_OWNER", "Nueramarcos")
+            target.write_text(
+                textwrap.dedent(
+                    f"""\
+                    # Security Policy
+
+                    ## Reporting a Vulnerability
+
+                    Open a private GitHub security advisory or email **@{owner}**.
+                    Include reproduction steps and impact. We aim to respond within 7 days.
+                    """
+                ),
+                encoding="utf-8",
+            )
+            return True
+
     return False
 
 
