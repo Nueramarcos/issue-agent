@@ -126,6 +126,23 @@ def _resolve_model(model: str) -> str:
     return "qwen2.5-coder:1.5b"
 
 
+_DOC_SUFFIXES = (".md", ".rst", ".txt")
+_DOC_NAMES = {"LICENSE", "CONTRIBUTING", "CODEOWNERS", ".gitignore"}
+
+
+def _is_docs_only(files: list[str]) -> bool:
+    if not files:
+        return False
+    for f in files:
+        base = Path(f).name
+        if base in _DOC_NAMES:
+            continue
+        if any(f.endswith(s) for s in _DOC_SUFFIXES):
+            continue
+        return False
+    return True
+
+
 def human_tower_review(
     ws: Path,
     repo: str,
@@ -138,6 +155,27 @@ def human_tower_review(
     model = _resolve_model(model)
     files = _changed_files(ws, base_branch)
     diff = _diff_excerpt(ws, base_branch)
+
+    if not files or not diff.strip():
+        return HumanTowerVerdict(
+            passed=False,
+            confidence="high",
+            review_comment="No diff to review — agent produced no commits.",
+            reasons=["empty_diff"],
+            similar_prs=[],
+            model=model,
+        )
+
+    if _is_docs_only(files) and len(diff.splitlines()) <= 80:
+        return HumanTowerVerdict(
+            passed=True,
+            confidence="high",
+            review_comment="Docs-only change within scope — auto-approved.",
+            reasons=["docs_only_fast_path"],
+            similar_prs=[],
+            model=model,
+        )
+
     similar = _similar_examples(repo, files, issue_summary, k=k)
 
     examples_text = []
