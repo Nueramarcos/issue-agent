@@ -3218,6 +3218,22 @@ def discover_repo_issues(repo: str) -> list[dict[str, Any]]:
                 "labels": ["agent-triage", "documentation", "good first issue"],
             }
         )
+    if "SECURITY.md" not in paths:
+        found.append(
+            {
+                "title": "Add SECURITY.md vulnerability reporting policy",
+                "body": "Create SECURITY.md with vulnerability reporting instructions. Max 12 lines.",
+                "labels": ["agent-triage", "documentation", "good first issue"],
+            }
+        )
+    if "CHANGELOG.md" not in paths:
+        found.append(
+            {
+                "title": "Add CHANGELOG.md for initial release",
+                "body": "Create CHANGELOG.md with ## [0.1.0] initial release entry. Max 10 lines.",
+                "labels": ["agent-triage", "documentation", "good first issue"],
+            }
+        )
     if repo.endswith("vertex-sim-core") and not any(p.startswith(".github/ISSUE_TEMPLATE") for p in paths):
         found.append(
             {
