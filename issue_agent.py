@@ -5125,6 +5125,18 @@ def resolve_issue_local(
         )
         record_success(repo, "local", title[:80], spec_title=title)
         return 0
+    elif hw_plan and hw_plan.lane == 0:
+        log(f"local highway L0 complete — {hw_plan.archetype} (no diff needed)")
+        append_flight_record(
+            {
+                "outcome": "highway_satisfied",
+                "repo": repo,
+                "archetype": hw_plan.archetype,
+                "handler": hw_plan.handler,
+            }
+        )
+        record_success(repo, "local", title[:80], spec_title=title)
+        return 0
     else:
         applied_l1, hw_plan = _try_highway_lane1(ws, repo, issue)
         if applied_l1:

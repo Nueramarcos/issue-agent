@@ -5,8 +5,33 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import re
+
 from highway.junk import junk_targets
 from highway.router import HighwayPlan
+
+_DEFAULT_GITIGNORE = (
+    "__pycache__/",
+    ".pytest_cache/",
+    "*.pyc",
+    ".venv/",
+    ".issue-agent-venv/",
+    "dist/",
+    "*.egg-info/",
+)
+
+
+def _gitignore_patterns(text: str, ws: Path) -> list[str]:
+    patterns: list[str] = []
+    for m in re.finditer(r"[\w.*]+/|[\w.*]+\.[\w]+", text):
+        p = m.group(0)
+        if "gitignore" not in p:
+            patterns.append(p)
+    if not patterns:
+        patterns = list(_DEFAULT_GITIGNORE)
+    if (ws / "Cargo.toml").exists():
+        patterns.extend(["/target/", "target/"])
+    return patterns
 
 
 def issue_already_satisfied(ws: Path, issue: dict[str, Any], plan: HighwayPlan) -> bool:
@@ -28,6 +53,12 @@ def issue_already_satisfied(ws: Path, issue: dict[str, Any], plan: HighwayPlan) 
         return True
     if arch == "codeowners" and (ws / "CODEOWNERS").exists():
         return True
+    if arch == "gitignore":
+        target = ws / ".gitignore"
+        if not target.exists():
+            return False
+        existing = target.read_text(encoding="utf-8", errors="replace")
+        return all(p in existing for p in _gitignore_patterns(text, ws))
     if arch == "ci_workflow" and list((ws / ".github" / "workflows").glob("*.yml")):
         return True
     if arch == "requirements_dev" and (ws / "requirements-dev.txt").exists():
