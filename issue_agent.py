@@ -2804,16 +2804,37 @@ def fork_smoke_healthy(repo: str) -> bool:
         return False
 
 
+def local_spec_already_satisfied(
+    repo: str, title: str, body: str = "", *, ws: Path | None = None
+) -> bool:
+    """True when origin/main already satisfies a local-queue / backlog spec."""
+    if is_repo_parked(repo):
+        return False
+    issue = {"title": title, "body": body}
+    plan = route_issue(repo, issue, repo_entry(repo))
+    if plan.lane not in (0, 1):
+        return False
+    base_ws = ws or workspace_for(repo)
+    if ws is None:
+        try:
+            ensure_repo(repo, base_ws)
+        except (RuntimeError, OSError):
+            return False
+    return issue_already_satisfied(base_ws, issue, plan)
+
+
 def prune_local_queue() -> int:
     queue = load_local_queue()
     if not queue:
         return 0
     kept: list[dict[str, Any]] = []
     removed = 0
-    done_titles = {}
+    done_titles: dict[str, set[str]] = {}
+    repo_ws: dict[str, Path] = {}
     for item in queue:
         repo = item.get("repo", "")
         title = item.get("title", "")
+        body = item.get("body", "")
         if item.get("status") in ("done", "completed"):
             removed += 1
             continue
@@ -2833,6 +2854,18 @@ def prune_local_queue() -> int:
             continue
         if title in done_titles.get(repo, set()):
             removed += 1
+            continue
+        if repo not in repo_ws:
+            base_ws = workspace_for(repo)
+            try:
+                ensure_repo(repo, base_ws)
+                repo_ws[repo] = base_ws
+            except (RuntimeError, OSError):
+                repo_ws[repo] = base_ws  # mark attempted — skip satisfied checks
+        ws = repo_ws.get(repo)
+        if ws and (ws / ".git").exists() and local_spec_already_satisfied(repo, title, body, ws=ws):
+            removed += 1
+            log(f"pruned local queue (highway satisfied): {repo} — {title[:70]}")
             continue
         kept.append(item)
     if removed:
@@ -3312,13 +3345,18 @@ def save_local_queue(queue: list[dict[str, Any]]) -> None:
 
 
 def enqueue_local(repo: str, spec: dict[str, Any]) -> None:
+    title = spec["title"]
+    body = spec.get("body", "")
+    if local_spec_already_satisfied(repo, title, body):
+        log(f"skip enqueue (highway satisfied): {repo} — {title[:70]}")
+        return
     queue = load_local_queue()
-    key = f"{repo}::{spec['title']}"
+    key = f"{repo}::{title}"
     if any(f"{q['repo']}::{q['title']}" == key for q in queue):
         return
-    queue.append({"repo": repo, "title": spec["title"], "body": spec.get("body", ""), "status": "pending"})
+    queue.append({"repo": repo, "title": title, "body": body, "status": "pending"})
     save_local_queue(queue)
-    log(f"queued local fix: {repo} — {spec['title']}")
+    log(f"queued local fix: {repo} — {title}")
 
 
 def ensure_repo_labels(repo: str) -> None:
