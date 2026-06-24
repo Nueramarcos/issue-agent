@@ -52,4 +52,35 @@ def issue_already_satisfied(ws: Path, issue: dict[str, Any], plan: HighwayPlan) 
                 return True
     if arch == "junk":
         return not junk_targets(ws, issue)
+    if arch == "pyproject_meta":
+        proj = ws / "pyproject.toml"
+        if proj.exists():
+            content = proj.read_text(encoding="utf-8", errors="replace")
+            if (
+                "name" in content
+                and "version" in content
+                and "description" in content
+                and "requires-python" in content
+            ):
+                return True
+    if arch == "rustfmt" and (ws / "rustfmt.toml").exists():
+        return True
+    if arch == "cargo_meta":
+        cargo = ws / "Cargo.toml"
+        if cargo.exists():
+            content = cargo.read_text(encoding="utf-8", errors="replace")
+            if "version" in content and "description" in content:
+                return True
+    if arch == "rust_unit_test":
+        for lib in (ws / "Vertex" / "lib.rs", *ws.rglob("lib.rs")):
+            if "target" in lib.parts or not lib.is_file():
+                continue
+            body_text = lib.read_text(encoding="utf-8", errors="replace")
+            if "SimConfig::default()" in body_text and "#[test]" in body_text:
+                return True
+    if arch == "docstring":
+        for init in ws.rglob("__init__.py"):
+            stripped = init.read_text(encoding="utf-8", errors="replace").lstrip()
+            if stripped.startswith('"""') or stripped.startswith("'''"):
+                return True
     return False

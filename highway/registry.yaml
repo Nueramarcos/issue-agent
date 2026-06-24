@@ -21,6 +21,21 @@ archetypes:
   py_typed:
     lane: 0
     handler: template:py_typed
+  pyproject_meta:
+    lane: 0
+    handler: template:pyproject_meta
+  rustfmt:
+    lane: 0
+    handler: template:rustfmt
+  cargo_meta:
+    lane: 0
+    handler: template:cargo_meta
+  rust_unit_test:
+    lane: 0
+    handler: template:rust_unit_test
+  docstring:
+    lane: 0
+    handler: template:docstring
   junk:
     lane: 0
     handler: template:junk_delete

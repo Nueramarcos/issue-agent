@@ -16,6 +16,11 @@ GOLDEN_HANDLERS = frozenset(
         "template:ci_workflow",
         "template:gh_templates",
         "template:requirements_dev",
+        "template:pyproject_meta",
+        "template:rustfmt",
+        "template:cargo_meta",
+        "template:rust_unit_test",
+        "template:docstring",
     }
 )
 
@@ -209,5 +214,162 @@ def apply_golden(handler: str, ws: Path, issue: dict[str, Any], repo_meta: dict[
             )
             changed = True
         return changed
+
+    if handler == "template:pyproject_meta":
+        if "pyproject.toml" not in text:
+            return False
+        target = ws / "pyproject.toml"
+        pkg_name = ws.name.replace("_", "-")
+        if target.exists():
+            content = target.read_text(encoding="utf-8")
+            if (
+                re.search(r"^name\s*=", content, re.M)
+                and re.search(r"^version\s*=", content, re.M)
+                and re.search(r"^description\s*=", content, re.M)
+                and "requires-python" in content
+            ):
+                return False
+            lines = content.splitlines()
+            if "[project]" not in content:
+                lines.extend(
+                    [
+                        "",
+                        "[project]",
+                        f'name = "{pkg_name}"',
+                        'version = "0.1.0"',
+                        'description = "Project package."',
+                        'requires-python = ">=3.10"',
+                    ]
+                )
+            else:
+                if not re.search(r"^name\s*=", content, re.M):
+                    lines.append(f'name = "{pkg_name}"')
+                if not re.search(r"^version\s*=", content, re.M):
+                    lines.append('version = "0.1.0"')
+                if not re.search(r"^description\s*=", content, re.M):
+                    lines.append('description = "Project package."')
+                if "requires-python" not in content:
+                    lines.append('requires-python = ">=3.10"')
+            target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            return True
+        target.write_text(
+            textwrap.dedent(
+                f"""\
+                [build-system]
+                requires = ["setuptools>=68"]
+                build-backend = "setuptools.build_meta"
+
+                [project]
+                name = "{pkg_name}"
+                version = "0.1.0"
+                description = "Project package."
+                requires-python = ">=3.10"
+                """
+            ),
+            encoding="utf-8",
+        )
+        return True
+
+    if handler == "template:rustfmt":
+        if "rustfmt" not in text:
+            return False
+        target = ws / "rustfmt.toml"
+        if target.exists():
+            return False
+        target.write_text('edition = "2021"\nmax_width = 100\n', encoding="utf-8")
+        return True
+
+    if handler == "template:cargo_meta":
+        if "cargo.toml" not in text:
+            return False
+        target = ws / "Cargo.toml"
+        if not target.exists():
+            return False
+        content = target.read_text(encoding="utf-8")
+        changed = False
+        if "description" not in content:
+            content = content.replace(
+                "[package]\n",
+                '[package]\ndescription = "Simulation core library."\n',
+                1,
+            )
+            changed = True
+        if re.search(r'^version\s*=', content, re.M) is None:
+            content = content.replace(
+                "[package]\n",
+                '[package]\nversion = "0.1.0"\n',
+                1,
+            )
+            changed = True
+        if changed:
+            target.write_text(content, encoding="utf-8")
+        return changed
+
+    if handler == "template:rust_unit_test":
+        if "lib.rs" not in text:
+            return False
+        lib = ws / "Vertex" / "lib.rs"
+        if not lib.exists():
+            for candidate in ws.rglob("lib.rs"):
+                if "target" not in candidate.parts:
+                    lib = candidate
+                    break
+        if not lib.exists():
+            return False
+        content = lib.read_text(encoding="utf-8")
+        if "SimConfig::default()" in content and "#[test]" in content:
+            return False
+        snippet = textwrap.dedent(
+            """\
+
+            #[test]
+            fn test_sim_config_default_lane0() {
+                let config = SimConfig::default();
+                assert_eq!(config.max_ticks, 1_000);
+                assert_eq!(config.time_step, 0.016);
+            }
+            """
+        )
+        if "mod tests {" in content:
+            idx = content.rfind("}")
+            if idx == -1:
+                return False
+            content = content[:idx] + snippet + content[idx:]
+        else:
+            content += textwrap.dedent(
+                """
+
+                #[cfg(test)]
+                mod tests {
+                    use super::*;
+
+                    #[test]
+                    fn test_sim_config_default_lane0() {
+                        let config = SimConfig::default();
+                        assert_eq!(config.max_ticks, 1_000);
+                        assert_eq!(config.time_step, 0.016);
+                    }
+                }
+                """
+            )
+        lib.write_text(content, encoding="utf-8")
+        return True
+
+    if handler == "template:docstring":
+        if "docstring" not in text or "__init__.py" not in text:
+            return False
+        pkg = detect_package_root(ws, repo_meta)
+        init = pkg / "__init__.py"
+        if not init.exists():
+            return False
+        content = init.read_text(encoding="utf-8")
+        stripped = content.lstrip()
+        if stripped.startswith('"""') or stripped.startswith("'''"):
+            return False
+        init.write_text(
+            '"""Package module."""\n\n' + content,
+            encoding="utf-8",
+        )
+        return True
 
     return False

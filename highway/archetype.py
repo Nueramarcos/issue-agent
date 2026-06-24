@@ -23,6 +23,18 @@ def detect_archetype(title: str, body: str = "") -> str:
         return "gitignore"
     if "py.typed" in text:
         return "py_typed"
+    if "pyproject.toml" in text and (
+        "metadata" in text or "requires-python" in text or "project metadata" in text
+    ):
+        return "pyproject_meta"
+    if "rustfmt.toml" in text or ("rustfmt" in text and "cargo fmt" in text):
+        return "rustfmt"
+    if "cargo.toml" in text and ("description" in text or "crate version" in text):
+        return "cargo_meta"
+    if "lib.rs" in text and ("#[test]" in text or "unit test" in text):
+        return "rust_unit_test"
+    if "docstring" in text and "__init__.py" in text:
+        return "docstring"
     if "__version__" in text or "version constant" in text or "version export" in text:
         return "version"
     if "smoke" in text or ("pytest" in text and "test_" in text):
@@ -47,6 +59,11 @@ LANE0_ARCHETYPES = frozenset(
         "codeowners",
         "gitignore",
         "py_typed",
+        "pyproject_meta",
+        "rustfmt",
+        "cargo_meta",
+        "rust_unit_test",
+        "docstring",
         "junk",
         "version",
         "requirements_dev",
