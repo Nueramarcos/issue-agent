@@ -285,6 +285,10 @@ def sanitize_agent_artifacts(ws: Path) -> None:
         name = path.name
         if name.startswith("python ") or name.startswith("cargo ") or name.startswith("npm "):
             path.unlink(missing_ok=True)
+    habitat_root = Path(os.environ.get("HABITAT_ROOT", HOME / "agent-habitat-os"))
+    habitat_sanitize = habitat_root / "agent-runtime/sanitize-workspace.sh"
+    if habitat_sanitize.is_file():
+        run(["bash", str(habitat_sanitize), str(ws)], check=False)
 
 
 def detect_test_command(ws: Path, override: str | None) -> str | None:
@@ -2228,8 +2232,13 @@ def prune_local_queue() -> int:
     for item in queue:
         repo = item.get("repo", "")
         title = item.get("title", "")
+        if item.get("status") in ("done", "completed"):
+            removed += 1
+            continue
         if repo not in done_titles:
             done_titles[repo] = completed_local_titles(repo)
+            if repo_has_issues(repo):
+                done_titles[repo] |= existing_issue_titles(repo)
         if STALE_CI_TITLE.match(title) and (
             main_branch_ci_state(repo) == "success" or fork_smoke_healthy(repo)
         ):
@@ -3419,7 +3428,8 @@ def process_local_queue(max_items: int = 3, *, repo_filter: str | None = None) -
     pending = [
         item
         for item in queue
-        if item.get("status") != "done" and (not repo_filter or item.get("repo") == repo_filter)
+        if item.get("status") not in ("done", "completed")
+        and (not repo_filter or item.get("repo") == repo_filter)
     ]
     pending.sort(key=lambda item: issue_fix_priority({"title": item.get("title", ""), "number": 0}))
     has_easy = any(
