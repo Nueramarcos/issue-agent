@@ -515,6 +515,96 @@ def workspace_for(repo: str, issue_num: int | None = None) -> Path:
     return WORKSPACES / f"{slug}-issue-{issue_num}"
 
 
+def fork_issue_workspace(repo: str, base_ws: Path, ws: Path) -> None:
+    """Fresh shallow clone per issue — avoids cp -a submodule/path bugs."""
+    if ws.exists():
+        run(["rm", "-rf", str(ws)], check=False)
+    branch = default_branch(repo)
+    remote_r = run(["git", "-C", str(base_ws), "remote", "get-url", "origin"], check=False)
+    remote = (remote_r.stdout or "").strip()
+    if remote:
+        clone_r = run(["git", "clone", "--depth", "1", "-b", branch, remote, str(ws)], check=False)
+        if clone_r.returncode == 0 and (ws / ".git").exists():
+            return
+    run(["gh", "repo", "clone", repo, str(ws)], check=False)
+
+
+def _is_doc_issue(issue: dict[str, Any]) -> bool:
+    text = f"{issue.get('title', '')} {issue.get('body') or ''}".lower()
+    keys = (
+        "license",
+        "contributing",
+        "readme",
+        "badge",
+        "py.typed",
+        "codeowners",
+        "code owners",
+        ".gitignore",
+        "documentation",
+    )
+    return any(k in text for k in keys)
+
+
+def _fix_model_for_issue(cfg: RepoConfig, issue: dict[str, Any]) -> str:
+    if _is_doc_issue(issue):
+        return os.environ.get("ISSUE_AGENT_DOC_MODEL", "ollama/qwen2.5-coder:1.5b")
+    return cfg.model
+
+
+def _try_doc_template_fix(ws: Path, issue: dict[str, Any]) -> bool:
+    """Deterministic single-file doc fixes when aider stalls (no network)."""
+    title = (issue.get("title") or "").lower()
+    body = (issue.get("body") or "").lower()
+    year = datetime.now(timezone.utc).year
+
+    if "license" in title and not (ws / "LICENSE").exists():
+        (ws / "LICENSE").write_text(
+            textwrap.dedent(
+                f"""\
+                MIT License
+
+                Copyright (c) {year} Nueramarcos
+
+                Permission is hereby granted, free of charge, to any person obtaining a copy
+                of this software and associated documentation files (the "Software"), to deal
+                in the Software without restriction, including without limitation the rights
+                to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+                copies of the Software, and to permit persons to whom the Software is
+                furnished to do so, subject to the following conditions:
+
+                The above copyright notice and this permission notice shall be included in all
+                copies or substantial portions of the Software.
+
+                THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+                IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+                FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+                AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+                LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+                OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+                SOFTWARE.
+                """
+            ),
+            encoding="utf-8",
+        )
+        return True
+
+    if "py.typed" in title or "py.typed" in body:
+        target = ws / "habitat" / "py.typed"
+        if not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.touch()
+            return True
+
+    if "codeowners" in title or "code owners" in title:
+        target = ws / "CODEOWNERS"
+        if not target.exists():
+            owner = os.environ.get("HABITAT_GITHUB_OWNER", "Nueramarcos")
+            target.write_text(f"habitat/ @{owner}\n", encoding="utf-8")
+            return True
+
+    return False
+
+
 def repo_entry(repo: str) -> dict[str, Any]:
     for entry in load_repos_config_raw():
         if entry.get("name") == repo:
@@ -1261,10 +1351,11 @@ def _run_aider_attempt(
         {extra}
         """
     ).strip()
+    model = _fix_model_for_issue(cfg, issue)
     aider_cmd = [
         str(AIDER),
         "--model",
-        cfg.model,
+        model,
         "--yes-always",
         "--auto-commits",
         "--no-show-model-warnings",
@@ -1335,9 +1426,7 @@ def resolve_issue(repo: str, issue_num: int, *, dry_run: bool = False) -> int:
     ws = workspace_for(repo, issue_num)
 
     if ws != base_ws:
-        if ws.exists():
-            run(["rm", "-rf", str(ws)], check=False)
-        run(["cp", "-a", str(base_ws), str(ws)])
+        fork_issue_workspace(repo, base_ws, ws)
 
     branch = f"fix/issue-{issue_num}"
     run(["git", "checkout", "-B", branch], cwd=ws)
@@ -1365,7 +1454,12 @@ def resolve_issue(repo: str, issue_num: int, *, dry_run: bool = False) -> int:
     gates_ok = False
     for attempt in range(1, max_retries + 1):
         log(f"fix attempt {attempt}/{max_retries} for #{issue_num}")
-        _run_aider_attempt(ws, repo, cfg, issue_num, issue, feedback=feedback, plan=plan)
+        if attempt == 1 and _is_doc_issue(issue) and _try_doc_template_fix(ws, issue):
+            log("doc template applied — skipping aider for single-file doc issue")
+            run(["git", "add", "-A"], cwd=ws, check=False)
+            run(["git", "commit", "-m", f"Fix issue #{issue_num} (doc template)"], cwd=ws, check=False)
+        else:
+            _run_aider_attempt(ws, repo, cfg, issue_num, issue, feedback=feedback, plan=plan)
         gates_ok, feedback = _local_gates(ws, repo, cfg, issue_num, issue, base=base)
         if gates_ok:
             append_flight_record(
