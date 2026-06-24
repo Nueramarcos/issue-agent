@@ -33,7 +33,7 @@ repos:
     - agent-triage
     - enhancement
     - good first issue
-    highway_lane: 2
+    highway_lane: 0
   - title: Add GitHub Actions CI workflow
     body: 'Add .github/workflows/ci.yml running python -m pytest -q on ubuntu-latest
 
@@ -43,7 +43,7 @@ repos:
     labels:
     - agent-triage
     - enhancement
-    highway_lane: 2
+    highway_lane: 0
   - title: Add README badges and project shields
     body: 'Add badges to README.md top: License MIT, Python 3.10+, and a CI badge
 
@@ -96,7 +96,7 @@ repos:
     - agent-triage
     - enhancement
     - good first issue
-    highway_lane: 2
+    highway_lane: 0
   - title: Add ast_parser CLI --version flag
     body: 'Add --version flag to ast_parser CLI that prints Orion.__version__.
 
@@ -107,7 +107,7 @@ repos:
     - agent-triage
     - enhancement
     - good first issue
-    highway_lane: 2
+    highway_lane: 0
   Nueramarcos/forge-ci-reliability:
   - title: Add SECURITY.md vulnerability reporting policy
     body: 'Create SECURITY.md with vulnerability reporting instructions.
@@ -153,7 +153,7 @@ repos:
     - agent-triage
     - enhancement
     - good first issue
-    highway_lane: 2
+    highway_lane: 0
   - title: Add README usage examples for forge CLI
     body: 'Add a ## Usage section to README.md with forge build/run/clean examples.
 
@@ -203,7 +203,7 @@ repos:
     - agent-triage
     - enhancement
     - good first issue
-    highway_lane: 2
+    highway_lane: 0
   - title: Add GitHub Actions CI for forge
     body: 'Add .github/workflows/ci.yml: Python 3.12, pip install pytest, run pytest
       -q.
@@ -212,7 +212,7 @@ repos:
     labels:
     - agent-triage
     - enhancement
-    highway_lane: 2
+    highway_lane: 0
   - title: Add forge CLI --version flag
     body: 'Add --version to forge/cli.py argparse that prints __version__ from forge
       package.
@@ -224,7 +224,7 @@ repos:
     - agent-triage
     - enhancement
     - good first issue
-    highway_lane: 2
+    highway_lane: 0
   - title: Add py.typed marker for forge package
     body: 'Add empty forge/py.typed so type checkers recognize the package as typed.
 
@@ -335,7 +335,7 @@ repos:
     - agent-triage
     - enhancement
     - good first issue
-    highway_lane: 2
+    highway_lane: 0
   - title: Add GitHub Actions CI for nexus
     body: 'Add .github/workflows/ci.yml running pytest on Python 3.12.
 
@@ -343,7 +343,7 @@ repos:
     labels:
     - agent-triage
     - enhancement
-    highway_lane: 2
+    highway_lane: 0
   - title: Add nexus pipeline version constant
     body: 'Add __version__ = "0.1.0" to nexus/__init__.py and reference it in module
       docstring.
@@ -355,7 +355,7 @@ repos:
     - agent-triage
     - enhancement
     - good first issue
-    highway_lane: 2
+    highway_lane: 0
   - title: Add test for nexus package version export
     body: 'Add tests/test_version.py asserting nexus.__version__ is a non-empty string.
 
@@ -366,7 +366,7 @@ repos:
     - agent-triage
     - enhancement
     - good first issue
-    highway_lane: 2
+    highway_lane: 0
   Nueramarcos/vertex-sim-core:
   - title: Add SECURITY.md vulnerability reporting policy
     body: 'Create SECURITY.md with vulnerability reporting instructions.
@@ -448,7 +448,7 @@ repos:
     labels:
     - agent-triage
     - enhancement
-    highway_lane: 2
+    highway_lane: 0
   - title: Add issue and PR templates
     body: 'Add .github/ISSUE_TEMPLATE/bug_report.md and
 
@@ -459,7 +459,7 @@ repos:
     - agent-triage
     - documentation
     - good first issue
-    highway_lane: 2
+    highway_lane: 0
   - title: Add rustfmt.toml with project defaults
     body: 'Add rustfmt.toml at repo root (edition 2021, max_width 100).
 
@@ -497,7 +497,7 @@ repos:
     labels:
     - agent-triage
     - documentation
-    highway_lane: 2
+    highway_lane: 0
   - title: Add fork banner to README
     body: 'Add a short ## Fork Notice section at the top of README.md after the title.
 
@@ -521,7 +521,7 @@ repos:
     labels:
     - agent-triage
     - enhancement
-    highway_lane: 2
+    highway_lane: 0
   Nueramarcos/vision:
   - title: Add .gitignore entries for torch build artifacts
     body: 'Add __pycache__/, .pytest_cache/, build/, dist/ to .gitignore if missing.
@@ -563,4 +563,4 @@ repos:
     labels:
     - agent-triage
     - enhancement
-    highway_lane: 2
+    highway_lane: 0

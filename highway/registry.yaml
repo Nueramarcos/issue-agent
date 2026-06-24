@@ -27,15 +27,21 @@ archetypes:
   readme:
     lane: 1
     handler: micro:readme
+  version:
+    lane: 0
+    handler: template:version
+  requirements_dev:
+    lane: 0
+    handler: template:requirements_dev
   smoke_tests:
-    lane: 2
-    handler: aider
+    lane: 0
+    handler: template:smoke_import
   ci_workflow:
-    lane: 2
-    handler: aider
+    lane: 0
+    handler: template:ci_workflow
   templates:
-    lane: 2
-    handler: aider
+    lane: 0
+    handler: template:gh_templates
   other:
     lane: 2
     handler: aider

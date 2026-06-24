@@ -23,6 +23,10 @@ def detect_archetype(title: str, body: str = "") -> str:
         return "gitignore"
     if "py.typed" in text:
         return "py_typed"
+    if "requirements-dev" in text or "requirements_dev" in text:
+        return "requirements_dev"
+    if "__version__" in text or "version constant" in text or "version export" in text:
+        return "version"
     if "readme" in text or "badge" in text or "shield" in text:
         return "readme"
     if "smoke" in text or ("pytest" in text and "test_" in text):
@@ -34,8 +38,8 @@ def detect_archetype(title: str, body: str = "") -> str:
     return "other"
 
 
-def is_lane0_candidate(title: str, body: str = "") -> bool:
-    return detect_archetype(title, body) in {
+LANE0_ARCHETYPES = frozenset(
+    {
         "license",
         "contributing",
         "security",
@@ -44,4 +48,14 @@ def is_lane0_candidate(title: str, body: str = "") -> bool:
         "gitignore",
         "py_typed",
         "junk",
+        "version",
+        "requirements_dev",
+        "smoke_tests",
+        "ci_workflow",
+        "templates",
     }
+)
+
+
+def is_lane0_candidate(title: str, body: str = "") -> bool:
+    return detect_archetype(title, body) in LANE0_ARCHETYPES

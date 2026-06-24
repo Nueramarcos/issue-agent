@@ -69,6 +69,9 @@ from highway import (
     route_issue,
     spec_highway_lane,
 )
+from highway.archetype import detect_archetype
+from highway.bottlenecks import analyze_bottlenecks, format_bottleneck_report, heal_stale_blocks
+from highway.satisfied import issue_already_satisfied
 from radar import enrich_opportunity
 from tower import TowerVerdict, tower_block_comment, tower_review_workspace
 
@@ -541,6 +544,19 @@ def fork_issue_workspace(repo: str, base_ws: Path, ws: Path) -> None:
         if clone_r.returncode == 0 and (ws / ".git").exists():
             return
     run(["gh", "repo", "clone", repo, str(ws)], check=False)
+
+
+DOC_ONLY_ARCHETYPES = frozenset(
+    {"license", "contributing", "security", "changelog", "codeowners", "templates"}
+)
+
+
+def _issue_archetype(issue: dict[str, Any]) -> str:
+    return detect_archetype(issue.get("title", ""), issue.get("body", ""))
+
+
+def _is_doc_only_issue(issue: dict[str, Any]) -> bool:
+    return _issue_archetype(issue) in DOC_ONLY_ARCHETYPES
 
 
 def _is_doc_issue(issue: dict[str, Any]) -> bool:
@@ -1394,9 +1410,13 @@ def _local_gates(
 ) -> tuple[bool, str]:
     """Tests + Tower + Human Tower — all local, no GitHub. Returns (ok, retry_feedback)."""
     test_cmd = detect_test_command(ws, cfg.test_command)
-    passed, test_out = run_tests(ws, test_cmd)
+    strict_tests = not _is_doc_only_issue(issue)
+    passed, test_out = run_tests(ws, test_cmd, strict=strict_tests)
     if not passed:
-        return False, f"Tests failed:\n{test_out[-2500:]}"
+        if _is_doc_only_issue(issue) and has_branch_changes(ws, base):
+            log("doc-only issue — tests skipped after diff produced")
+        else:
+            return False, f"Tests failed:\n{test_out[-2500:]}"
 
     if not has_branch_changes(ws, base):
         return False, "No file changes produced — implement the plan with a minimal diff."
@@ -1465,6 +1485,7 @@ def resolve_issue(repo: str, issue_num: int, *, dry_run: bool = False) -> int:
     max_retries = max(1, int(os.environ.get("HABITAT_MAX_FIX_RETRIES", cfg.max_fix_retries)))
     feedback = ""
     gates_ok = False
+    highway_committed = False
     for attempt in range(1, max_retries + 1):
         log(f"fix attempt {attempt}/{max_retries} for #{issue_num}")
         applied_l0 = False
@@ -1475,35 +1496,58 @@ def resolve_issue(repo: str, issue_num: int, *, dry_run: bool = False) -> int:
                 log("highway L0 — skipping aider (0 Ollama tokens)")
                 run(["git", "add", "-A"], cwd=ws, check=False)
                 run(["git", "commit", "-m", f"Fix issue #{issue_num} (highway L0)"], cwd=ws, check=False)
+                highway_committed = True
             elif hw_plan and hw_plan.lane == -1:
                 log(f"highway blocked — {hw_plan.skip_reason}")
                 return 1
+            elif hw_plan and hw_plan.lane in (0, 1) and issue_already_satisfied(ws, issue, hw_plan):
+                log(f"highway already satisfied — {hw_plan.archetype} (no diff needed)")
+                append_flight_record(
+                    {
+                        "outcome": "highway_satisfied",
+                        "repo": repo,
+                        "archetype": hw_plan.archetype,
+                        "issue_num": issue_num,
+                    }
+                )
+                maybe_issue_comment(
+                    repo,
+                    issue_num,
+                    f"🤖 **Issue Agent** — already satisfied ({hw_plan.archetype}); no PR needed.",
+                    success=True,
+                )
+                record_success(repo, "issue", str(issue_num), spec_title=issue["title"])
+                return 0
             elif not applied_l0:
                 applied_l1, hw_plan = _try_highway_lane1(ws, repo, issue)
                 if applied_l1:
                     log("highway L1 — skipping Aider (micro-LLM)")
                     run(["git", "add", "-A"], cwd=ws, check=False)
                     run(["git", "commit", "-m", f"Fix issue #{issue_num} (highway L1)"], cwd=ws, check=False)
+                    highway_committed = True
         if not applied_l0 and not applied_l1:
-            meta = repo_entry(repo)
-            hw_plan = route_issue(repo, issue, meta)
-            if hw_plan.lane >= 2:
-                solv = compute_repo_solvability(repo, meta, use_cache=True)
-                ok, reason = admit_to_aider(repo, issue, hw_plan, meta, solv)
-                if not ok:
-                    log(f"highway admission denied — {reason}")
-                    append_flight_record(
-                        {
-                            "outcome": "highway_skip",
-                            "repo": repo,
-                            "issue_num": issue_num,
-                            "reason": reason,
-                            "archetype": hw_plan.archetype,
-                        }
-                    )
-                    record_failure(repo, "issue", str(issue_num), f"highway admission: {reason}")
-                    return 1
-            _run_aider_attempt(ws, repo, cfg, issue_num, issue, feedback=feedback, plan=plan)
+            if highway_committed:
+                log("highway already committed — skip Aider on retry")
+            else:
+                meta = repo_entry(repo)
+                hw_plan = route_issue(repo, issue, meta)
+                if hw_plan.lane >= 2:
+                    solv = compute_repo_solvability(repo, meta, use_cache=True)
+                    ok, reason = admit_to_aider(repo, issue, hw_plan, meta, solv)
+                    if not ok:
+                        log(f"highway admission denied — {reason}")
+                        append_flight_record(
+                            {
+                                "outcome": "highway_skip",
+                                "repo": repo,
+                                "issue_num": issue_num,
+                                "reason": reason,
+                                "archetype": hw_plan.archetype,
+                            }
+                        )
+                        record_failure(repo, "issue", str(issue_num), f"highway admission: {reason}")
+                        return 1
+                _run_aider_attempt(ws, repo, cfg, issue_num, issue, feedback=feedback, plan=plan)
         gates_ok, feedback = _local_gates(ws, repo, cfg, issue_num, issue, base=base)
         if gates_ok:
             append_flight_record(
@@ -1638,6 +1682,13 @@ def cmd_highway(args: argparse.Namespace) -> int:
     """Solvability Highway metrics and admission policy."""
     if args.action == "stats":
         print(format_stats_report(highway_stats(args.hours)))
+        return 0
+    if args.action == "bottlenecks":
+        print(format_bottleneck_report(analyze_bottlenecks(args.hours)))
+        return 0
+    if args.action == "heal":
+        result = heal_stale_blocks(min_highway_wins=args.min_wins)
+        print(f"healed {result['cleared']} failure blocks across {result['repos_with_wins']} warm repos")
         return 0
     if args.action == "lanes":
         backlog = load_collector_backlog()
@@ -2930,7 +2981,11 @@ def compute_repo_solvability(repo: str, entry: dict[str, Any] | None = None, *, 
 
     passes_6h, failures_6h = recent_repo_activity(repo, hours=6)
     factors["no_commits_6h"] = failures_6h
-    score -= min(14, failures_6h * 4)
+    hw_wins_early = highway_wins_by_repo(hours=48).get(repo, 0)
+    fail_penalty = failures_6h * 4
+    if hw_wins_early >= 2:
+        fail_penalty = max(0, fail_penalty - hw_wins_early * 3)
+    score -= min(14, fail_penalty)
 
     blocked_seeds = count_blocked_seed_kinds(repo)
     blocked_issues = count_blocked_issues(repo)
@@ -2957,9 +3012,8 @@ def compute_repo_solvability(repo: str, entry: dict[str, Any] | None = None, *, 
     if stack == "fork":
         score -= 3
 
-    hw_wins = highway_wins_by_repo(hours=48).get(repo, 0)
-    factors["highway_wins_48h"] = hw_wins
-    score += min(15, hw_wins * 5)
+    factors["highway_wins_48h"] = hw_wins_early
+    score += min(15, hw_wins_early * 5)
 
     score = max(0, min(100, int(round(score))))
     if score >= 70:
@@ -5688,6 +5742,12 @@ def build_parser() -> argparse.ArgumentParser:
     r.set_defaults(func=cmd_highway, action="stats")
     r = hw_sub.add_parser("lanes", help="Count backlog items per highway lane")
     r.set_defaults(func=cmd_highway, action="lanes")
+    r = hw_sub.add_parser("bottlenecks", help="Failure ledger + highway bottleneck report")
+    r.add_argument("--hours", type=int, default=168)
+    r.set_defaults(func=cmd_highway, action="bottlenecks")
+    r = hw_sub.add_parser("heal", help="Clear stale failure blocks on highway-warm repos")
+    r.add_argument("--min-wins", type=int, default=2)
+    r.set_defaults(func=cmd_highway, action="heal")
 
     s = sub.add_parser("failures", help="Show failure ledger and hints")
     s.set_defaults(func=lambda _: cmd_status(argparse.Namespace()) or 0)

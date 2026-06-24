@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from highway.golden import GOLDEN_HANDLERS, apply_golden
 from highway.package_root import detect_package_root
 
 
@@ -215,5 +216,8 @@ def apply_template(handler: str, ws: Path, issue: dict[str, Any], repo_meta: dic
                 candidate.unlink()
                 removed = True
         return removed
+
+    if handler in GOLDEN_HANDLERS:
+        return apply_golden(handler, ws, issue, repo_meta)
 
     return False

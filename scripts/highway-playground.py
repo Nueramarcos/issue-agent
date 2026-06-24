@@ -15,6 +15,8 @@ Run from anywhere (adds issue-agent to sys.path automatically):
 Or via issue-agent (same stats/lanes):
 
   issue-agent highway stats --hours 24
+  issue-agent highway bottlenecks
+  issue-agent highway heal
   issue-agent highway lanes
 """
 
