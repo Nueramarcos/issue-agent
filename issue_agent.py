@@ -542,6 +542,7 @@ def _is_doc_issue(issue: dict[str, Any]) -> bool:
         "security.md",
         "security policy",
         "vulnerability",
+        "changelog",
         ".gitignore",
         "documentation",
     )
@@ -618,6 +619,23 @@ def _try_doc_template_fix(ws: Path, issue: dict[str, Any]) -> bool:
 
                     Open a private GitHub security advisory or email **@{owner}**.
                     Include reproduction steps and impact. We aim to respond within 7 days.
+                    """
+                ),
+                encoding="utf-8",
+            )
+            return True
+
+    if "changelog" in title or "changelog.md" in body:
+        target = ws / "CHANGELOG.md"
+        if not target.exists():
+            target.write_text(
+                textwrap.dedent(
+                    f"""\
+                    # Changelog
+
+                    ## [0.1.0] - {year}-01-01
+
+                    - Initial Habitat demo release
                     """
                 ),
                 encoding="utf-8",
