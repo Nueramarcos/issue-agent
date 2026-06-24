@@ -1,12 +1,50 @@
-# Human Reviewer — repos to mine for maintainer-voice training data.
-# Priority: repos where humans review with substance (bounties, OSS maintainers).
+# Human Reviewer corpus sources — tiered for versatile, complex maintainer discourse.
+# Archivist prioritizes PRs with reviews, thread comments, and multi-file changes.
 
 repos:
-  - Nueramarcos/agent-habitat-demo   # 11 merged agent rounds — baseline corpus
-  - tinygrad/tinygrad                # strict human bar; AI PRs often rejected
-  - pytorch/vision                   # classic bounty / contributor reviews
-  - numpy/numpy                      # high-quality maintainer discourse
-  - psf/requests                     # small, readable review threads
+  # Tier A — strict / bounty culture (rejections + high bar)
+  - tinygrad/tinygrad
+  - pytorch/pytorch
+  - llvm/llvm-project
 
-# PRs from these logins get bounty_hunter=true in corpus
+  # Tier B — mature OSS with formal review workflow
+  - numpy/numpy
+  - psf/requests
+  - pydantic/pydantic
+  - fastapi/fastapi
+  - django/django
+
+  # Tier C — systems / performance / multi-language
+  - golang/go
+  - rust-lang/rust
+  - apache/arrow
+  - redis/redis
+
+  # Tier D — ML / GPU / scientific (complex diffs)
+  - pytorch/vision
+  - huggingface/transformers
+  - ml-explore/mlx
+
+  # Tier E — fleet baseline (agent merge patterns)
+  - Nueramarcos/agent-habitat-demo
+
+# Per-repo overrides (optional)
+repo_limits:
+  tinygrad/tinygrad:
+    merged: 25
+    rejected: 40
+  numpy/numpy:
+    merged: 40
+    rejected: 20
+  rust-lang/rust:
+    merged: 30
+    rejected: 15
+
+# Minimum discourse signals — skip PRs below this unless curated
+min_signals:
+  maintainer_voice: true
+  or_review_comments: 1
+  or_conversation: 2
+  or_changes_requested: true
+
 bounty_hunters: []

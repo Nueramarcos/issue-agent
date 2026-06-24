@@ -8,7 +8,7 @@ import json
 import sys
 from pathlib import Path
 
-from human_reviewer.collector import collect_repo, load_sources
+from human_reviewer.collector import collect_all_deep, collect_curated, collect_repo, load_sources
 from human_reviewer.export import export_lora_dataset, stats
 from human_reviewer.gate import human_tower_review
 
@@ -32,17 +32,51 @@ def cmd_collect(args: argparse.Namespace) -> int:
     if not repos:
         print("no repos configured — edit human-reviewer/sources.yaml")
         return 1
+    cfg = load_sources()
     total = 0
+    if getattr(args, "deep", False):
+        c = collect_curated(bounty_hunters=hunters)
+        print(f"  curated: +{c} record(s)")
+        total += c
     for repo in repos:
         n = collect_repo(
             repo,
             limit=args.limit,
             include_closed=args.include_closed,
             bounty_hunters=hunters,
+            deep=getattr(args, "deep", False),
+            cfg=cfg,
         )
         print(f"  {repo}: +{n} human review record(s)")
         total += n
     print(f"\nCorpus: +{total} total → {AGENT_ROOT / 'flight-recorder' / 'human-reviews.jsonl'}")
+    return 0
+
+
+def cmd_collect_deep(args: argparse.Namespace) -> int:
+    cfg = load_sources()
+    hunters = set(str(h) for h in (cfg.get("bounty_hunters") or []))
+    total = 0
+    if args.repo:
+        total += collect_curated(bounty_hunters=hunters)
+        n = collect_repo(args.repo, limit=args.limit, deep=True, bounty_hunters=hunters, cfg=cfg)
+        print(f"  {args.repo}: +{n}")
+        total += n
+    else:
+        print("Archivist deep collect — versatile complex PR discourse\n")
+        total += collect_curated(bounty_hunters=hunters)
+        print(f"  curated seeds: done")
+        for repo in cfg.get("repos") or []:
+            n = collect_repo(repo, limit=args.limit, deep=True, bounty_hunters=hunters, cfg=cfg)
+            print(f"  {repo}: +{n}")
+            total += n
+    export_lora_dataset()
+    s = stats()
+    print(f"\n═══ Deep collect complete: +{total} this run ═══")
+    print(f"  corpus: {s['corpus_rows']} rows | LoRA-ready: {s['lora_examples']} | voice: {s['with_maintainer_voice']}")
+    print(f"  high complexity: {s.get('high_complexity', 0)}")
+    if s.get("by_tag"):
+        print("  top tags:", ", ".join(f"{k}({v})" for k, v in list(s["by_tag"].items())[:8]))
     return 0
 
 
@@ -71,6 +105,12 @@ def cmd_stats(_: argparse.Namespace) -> int:
         print("  by verdict:")
         for v, n in s["by_verdict"].items():
             print(f"    {v}: {n}")
+    if s.get("high_complexity"):
+        print(f"  high complexity (40+): {s['high_complexity']}")
+    if s.get("by_tag"):
+        print("  top complexity tags:")
+        for tag, n in list(s["by_tag"].items())[:10]:
+            print(f"    {tag}: {n}")
     min_target = 200
     if s["lora_examples"] < min_target:
         print(f"\n  target: {min_target}+ examples before fine-tune (currently {s['lora_examples']})")
@@ -112,7 +152,13 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--pr", type=int, help="Collect one PR by number (requires --repo)")
     c.add_argument("--limit", type=int, default=30, help="Max PRs per repo per state")
     c.add_argument("--include-closed", action="store_true", default=True, help="Include rejected/closed PRs with review text")
+    c.add_argument("--deep", action="store_true", help="Paginated REST + search + complexity filter")
     c.set_defaults(func=cmd_collect)
+
+    d = sub.add_parser("collect-deep", help="Full Archivist pass: all repos, curated seeds, rejections")
+    d.add_argument("--limit", type=int, default=40, help="Max merged PRs per repo")
+    d.add_argument("--repo", help="Single repo only")
+    d.set_defaults(func=cmd_collect_deep)
 
     e = sub.add_parser("export", help="Export LoRA instruction JSONL from corpus")
     e.add_argument("-o", "--output", help="Output path")

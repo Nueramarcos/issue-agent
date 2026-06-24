@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -13,8 +14,9 @@ AGENT_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_DIR = AGENT_ROOT / "human-reviewer"
 CORPUS_PATH = AGENT_ROOT / "flight-recorder" / "human-reviews.jsonl"
 ISSUE_REF = re.compile(r"(?:close[sd]?|fix(?:e[sd])?)\s+#(\d+)", re.I)
-DIFF_MAX = 8000
+DIFF_MAX = 12000
 REVIEW_MAX = 1200
+COLLECT_SLEEP_SECS = 0.8
 
 
 def _run(cmd: list[str], *, check: bool = False) -> subprocess.CompletedProcess[str]:
@@ -218,9 +220,137 @@ def _fetch_pr_conversation(repo: str, pr_number: int) -> list[dict[str, Any]]:
 
 
 def _fetch_diff(repo: str, pr_number: int) -> str:
+    owner, name = repo.split("/", 1)
+    result = _run(["gh", "api", f"repos/{owner}/{name}/pulls/{pr_number}", "-H", "Accept: application/vnd.github.diff"], check=False)
+    if result.returncode == 0 and result.stdout:
+        return result.stdout[:DIFF_MAX]
     result = _run(["gh", "pr", "diff", str(pr_number), "-R", repo], check=False)
-    text = (result.stdout or "")[:DIFF_MAX]
-    return text
+    return (result.stdout or "")[:DIFF_MAX]
+
+
+def _fetch_pr_files(repo: str, pr_number: int) -> list[str]:
+    owner, name = repo.split("/", 1)
+    data = gh_json(["api", f"repos/{owner}/{name}/pulls/{pr_number}/files?per_page=100"])
+    if not isinstance(data, list):
+        return []
+    return [str(f.get("filename", "")) for f in data if f.get("filename")]
+
+
+def _fetch_issue_context(repo: str, issue_num: int) -> dict[str, str]:
+    owner, name = repo.split("/", 1)
+    data = gh_json(["api", f"repos/{owner}/{name}/issues/{issue_num}"])
+    if not isinstance(data, dict):
+        return {}
+    labels = ", ".join(l.get("name", "") for l in (data.get("labels") or []) if isinstance(l, dict))
+    return {
+        "title": str(data.get("title", ""))[:300],
+        "body": str(data.get("body") or "")[:1500],
+        "labels": labels[:200],
+        "state": str(data.get("state", "")),
+    }
+
+
+def _language_tags(files: list[str]) -> list[str]:
+    ext_map = {
+        ".py": "python",
+        ".rs": "rust",
+        ".go": "go",
+        ".c": "c",
+        ".cpp": "cpp",
+        ".cc": "cpp",
+        ".h": "c_header",
+        ".cu": "cuda",
+        ".mlir": "mlir",
+        ".td": "tablegen",
+        ".yml": "ci",
+        ".yaml": "ci",
+        ".md": "docs",
+        ".toml": "config",
+    }
+    tags: set[str] = set()
+    for f in files:
+        for ext, tag in ext_map.items():
+            if f.endswith(ext):
+                tags.add(tag)
+    return sorted(tags)
+
+
+def _complexity_score(record: dict[str, Any]) -> tuple[int, list[str]]:
+    """Score PR complexity for versatile training coverage."""
+    score = 0
+    tags: list[str] = []
+    files = record.get("files_changed") or []
+    n_files = len(files)
+    delta = int(record.get("additions") or 0) + int(record.get("deletions") or 0)
+    reviews = record.get("reviews") or []
+    conv = record.get("conversation") or []
+    line_comments = record.get("review_comments") or []
+
+    if n_files >= 8:
+        score += 25
+        tags.append("multi_file")
+    elif n_files >= 3:
+        score += 12
+        tags.append("multi_file")
+
+    if delta >= 2000:
+        score += 25
+        tags.append("large_diff")
+    elif delta >= 400:
+        score += 12
+        tags.append("medium_diff")
+
+    if any(r.get("state", "").upper() == "CHANGES_REQUESTED" for r in reviews):
+        score += 20
+        tags.append("iteration")
+    if len(reviews) >= 2:
+        score += 10
+        tags.append("reviewed")
+    if len(conv) >= 4:
+        score += 15
+        tags.append("thread_heavy")
+    if len(line_comments) >= 3:
+        score += 12
+        tags.append("inline_feedback")
+
+    if record.get("verdict") != "merged":
+        score += 18
+        tags.append("rejection")
+
+    langs = _language_tags(files)
+    if len(langs) >= 2:
+        score += 10
+        tags.append("multi_language")
+    tags.extend(langs[:6])
+
+    if record.get("issue_context"):
+        score += 8
+        tags.append("issue_linked")
+
+    if record.get("bounty_hunter"):
+        score += 5
+        tags.append("bounty_hunter")
+
+    return score, tags
+
+
+def _has_training_signal(record: dict[str, Any], min_cfg: dict[str, Any] | None = None) -> bool:
+    """Keep PRs with substantive human discourse (skip empty agent-only merges)."""
+    if min_cfg is None:
+        min_cfg = {}
+    if record.get("maintainer_voice"):
+        return True
+    if len(record.get("review_comments") or []) >= int(min_cfg.get("or_review_comments", 1)):
+        return True
+    if len(record.get("conversation") or []) >= int(min_cfg.get("or_conversation", 2)):
+        return True
+    if any(r.get("state", "").upper() == "CHANGES_REQUESTED" for r in (record.get("reviews") or [])):
+        return True
+    if min_cfg.get("maintainer_voice") and not record.get("maintainer_voice"):
+        return False
+    # Merged with zero discourse — low value unless complexity is high
+    score, _ = _complexity_score(record)
+    return score >= 35
 
 
 def _normalize_review(rev: dict[str, Any]) -> dict[str, str]:
@@ -289,7 +419,13 @@ def collect_pr(
         maintainer_voice = review_comments[0]["body"]
 
     files = [f.get("path", "") for f in (pr.get("files") or []) if f.get("path")]
+    if not files:
+        files = _fetch_pr_files(repo, pr_number)
     body = pr.get("body") or ""
+    issue_nums = _parse_issue_numbers(pr.get("title", ""), body)
+    issue_context: dict[str, Any] = {}
+    if issue_nums:
+        issue_context = _fetch_issue_context(repo, issue_nums[0])
 
     record: dict[str, Any] = {
         "id": f"{repo}#{pr_number}",
@@ -302,7 +438,8 @@ def collect_pr(
         "merged_at": pr.get("mergedAt") or "",
         "closed_at": pr.get("closedAt") or "",
         "verdict": verdict,
-        "issue_numbers": _parse_issue_numbers(pr.get("title", ""), body),
+        "issue_numbers": issue_nums,
+        "issue_context": issue_context,
         "files_changed": files[:30],
         "additions": int(pr.get("additions") or 0),
         "deletions": int(pr.get("deletions") or 0),
@@ -315,7 +452,89 @@ def collect_pr(
         "source": "gh_collect",
         "ts": datetime.now(timezone.utc).isoformat(),
     }
+    score, tags = _complexity_score(record)
+    record["complexity_score"] = score
+    record["complexity_tags"] = tags
     return record
+
+
+def list_prs_rest(
+    repo: str,
+    *,
+    want_merged: bool = True,
+    limit: int = 50,
+    pages: int = 3,
+) -> list[dict[str, Any]]:
+    """Paginated REST pull list — avoids GraphQL rate limits."""
+    owner, name = repo.split("/", 1)
+    out: list[dict[str, Any]] = []
+    for page in range(1, pages + 1):
+        data = gh_json(
+            [
+                "api",
+                f"repos/{owner}/{name}/pulls?state=closed&page={page}&per_page=100&sort=updated&direction=desc",
+            ]
+        )
+        if not isinstance(data, list) or not data:
+            break
+        for p in data:
+            merged_at = p.get("merged_at")
+            if want_merged and not merged_at:
+                continue
+            if not want_merged and merged_at:
+                continue
+            out.append(
+                {
+                    "number": p.get("number"),
+                    "title": p.get("title"),
+                    "author": {"login": (p.get("user") or {}).get("login", "")},
+                    "mergedAt": merged_at,
+                }
+            )
+            if len(out) >= limit:
+                return out
+    return out
+
+
+def search_discourse_prs(repo: str, *, limit: int = 15) -> list[int]:
+    """Find PRs with substantive comment threads via GitHub search."""
+    owner, name = repo.split("/", 1)
+    nums: list[int] = []
+    queries = [
+        f"repo:{owner}/{name} is:pr is:merged comments:>2",
+        f"repo:{owner}/{name} is:pr is:closed comments:>3",
+        f"repo:{owner}/{name} is:pr review:changes_requested",
+    ]
+    for q in queries:
+        result = _run(
+            ["gh", "search", "prs", q, "--json", "number", "--limit", str(limit)],
+            check=False,
+        )
+        if result.returncode != 0:
+            continue
+        try:
+            rows = json.loads(result.stdout or "[]")
+        except json.JSONDecodeError:
+            continue
+        for row in rows:
+            n = int(row.get("number", 0))
+            if n and n not in nums:
+                nums.append(n)
+        if len(nums) >= limit:
+            break
+    return nums[:limit]
+
+
+def load_curated_prs() -> list[dict[str, Any]]:
+    path = CONFIG_DIR / "curated-prs.yaml"
+    if not path.exists():
+        return []
+    try:
+        import yaml  # type: ignore
+    except ImportError:
+        return []
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return list(data.get("prs") or [])
 
 
 def list_prs(
@@ -364,6 +583,32 @@ def _load_existing_ids(path: Path) -> set[str]:
     return ids
 
 
+def _repo_limits(cfg: dict[str, Any], repo: str, default: int) -> tuple[int, int]:
+    overrides = cfg.get("repo_limits") or {}
+    entry = overrides.get(repo) or {}
+    return int(entry.get("merged", default)), int(entry.get("rejected", default // 2))
+
+
+def _try_add_record(
+    record: dict[str, Any] | None,
+    *,
+    seen: set[str],
+    out: Path,
+    min_cfg: dict[str, Any],
+    require_signal: bool,
+) -> bool:
+    if not record:
+        return False
+    rid = str(record.get("id", ""))
+    if not rid or rid in seen:
+        return False
+    if require_signal and not _has_training_signal(record, min_cfg):
+        return False
+    append_corpus(record, out)
+    seen.add(rid)
+    return True
+
+
 def collect_repo(
     repo: str,
     *,
@@ -371,35 +616,78 @@ def collect_repo(
     include_closed: bool = True,
     bounty_hunters: set[str] | None = None,
     corpus_path: Path | None = None,
+    deep: bool = False,
+    cfg: dict[str, Any] | None = None,
 ) -> int:
     out = corpus_path or CORPUS_PATH
     seen = _load_existing_ids(out)
     added = 0
+    cfg = cfg or load_sources()
+    min_cfg = cfg.get("min_signals") or {}
+    merged_lim, rejected_lim = _repo_limits(cfg, repo, limit)
+    if deep:
+        merged_lim = max(merged_lim, limit)
+        rejected_lim = max(rejected_lim, limit // 2)
 
-    for state in ("merged",):
-        for pr in list_prs(repo, state=state, limit=limit):
-            pr_num = int(pr["number"])
-            rid = f"{repo}#{pr_num}"
-            if rid in seen:
-                continue
-            record = collect_pr(repo, pr_num, bounty_hunters=bounty_hunters)
-            if record:
-                append_corpus(record, out)
-                seen.add(rid)
-                added += 1
+    def ingest(pr_num: int, *, require_signal: bool = True) -> None:
+        nonlocal added
+        time.sleep(COLLECT_SLEEP_SECS)
+        record = collect_pr(repo, pr_num, bounty_hunters=bounty_hunters)
+        if _try_add_record(record, seen=seen, out=out, min_cfg=min_cfg, require_signal=require_signal):
+            added += 1
 
-    if include_closed:
-        for pr in list_prs(repo, state="closed", limit=min(limit, 15)):
-            if pr.get("mergedAt"):
-                continue
-            pr_num = int(pr["number"])
-            rid = f"{repo}#{pr_num}"
-            if rid in seen:
-                continue
-            record = collect_pr(repo, pr_num, bounty_hunters=bounty_hunters)
-            if record and record.get("maintainer_voice"):
-                append_corpus(record, out)
-                seen.add(rid)
-                added += 1
+    if deep:
+        for pr in list_prs_rest(repo, want_merged=True, limit=merged_lim, pages=4):
+            ingest(int(pr["number"]))
+        for pr_num in search_discourse_prs(repo, limit=max(merged_lim // 2, 10)):
+            ingest(pr_num)
+        if include_closed:
+            for pr in list_prs_rest(repo, want_merged=False, limit=rejected_lim, pages=4):
+                ingest(int(pr["number"]), require_signal=True)
+    else:
+        for pr in list_prs(repo, state="merged", limit=merged_lim):
+            ingest(int(pr["number"]))
+        if include_closed:
+            for pr in list_prs(repo, state="closed", limit=rejected_lim):
+                if pr.get("mergedAt"):
+                    continue
+                ingest(int(pr["number"]), require_signal=True)
 
     return added
+
+
+def collect_curated(*, bounty_hunters: set[str] | None = None, corpus_path: Path | None = None) -> int:
+    out = corpus_path or CORPUS_PATH
+    seen = _load_existing_ids(out)
+    cfg = load_sources()
+    min_cfg = cfg.get("min_signals") or {}
+    added = 0
+    for entry in load_curated_prs():
+        repo = str(entry.get("repo", ""))
+        pr_num = int(entry.get("number", 0))
+        if not repo or not pr_num:
+            continue
+        time.sleep(COLLECT_SLEEP_SECS)
+        record = collect_pr(repo, pr_num, bounty_hunters=bounty_hunters)
+        if not record:
+            continue
+        extra_tags = entry.get("tags") or []
+        if extra_tags:
+            record["complexity_tags"] = sorted(set((record.get("complexity_tags") or []) + list(extra_tags)))
+            record["curated"] = True
+        if _try_add_record(record, seen=seen, out=out, min_cfg=min_cfg, require_signal=False):
+            added += 1
+    return added
+
+
+def collect_all_deep(*, limit: int = 40, sleep_repos: float = 2.0) -> dict[str, int]:
+    """Full Archivist pass — all sources, curated seeds, complexity filter."""
+    cfg = load_sources()
+    hunters = set(str(h) for h in (cfg.get("bounty_hunters") or []))
+    results: dict[str, int] = {}
+    results["curated"] = collect_curated(bounty_hunters=hunters)
+    for repo in cfg.get("repos") or []:
+        time.sleep(sleep_repos)
+        n = collect_repo(repo, limit=limit, deep=True, bounty_hunters=hunters, cfg=cfg)
+        results[repo] = n
+    return results

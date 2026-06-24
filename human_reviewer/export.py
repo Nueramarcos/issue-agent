@@ -45,6 +45,16 @@ def _input_block(row: dict[str, Any]) -> str:
     ]
     if row.get("issue_numbers"):
         parts.append(f"issues: {', '.join('#' + str(n) for n in row['issue_numbers'])}")
+    ctx = row.get("issue_context") or {}
+    if ctx.get("title"):
+        parts.append(f"issue_title: {ctx['title'][:200]}")
+    if ctx.get("labels"):
+        parts.append(f"issue_labels: {ctx['labels']}")
+    if ctx.get("body"):
+        parts.append(f"issue_body:\n{ctx['body'][:600]}")
+    tags = row.get("complexity_tags") or []
+    if tags:
+        parts.append(f"complexity_tags: {', '.join(tags[:10])}")
     body = (row.get("body") or "").strip()
     if body:
         parts.append(f"pr_body:\n{body[:800]}")
@@ -104,6 +114,8 @@ def row_to_example(row: dict[str, Any]) -> dict[str, Any] | None:
             "author": row.get("author"),
             "bounty_hunter": bool(row.get("bounty_hunter")),
             "verdict": verdict,
+            "complexity_score": row.get("complexity_score", 0),
+            "complexity_tags": row.get("complexity_tags") or [],
         },
     }
 
@@ -152,11 +164,20 @@ def stats(path: Path | None = None) -> dict[str, Any]:
         if r.get("maintainer_voice"):
             with_voice += 1
     lora_n = len([ex for ex in (row_to_example(r) for r in rows) if ex])
+    by_tag: dict[str, int] = {}
+    complex_n = 0
+    for r in rows:
+        if int(r.get("complexity_score") or 0) >= 40:
+            complex_n += 1
+        for t in r.get("complexity_tags") or []:
+            by_tag[t] = by_tag.get(t, 0) + 1
     return {
         "corpus_rows": len(rows),
         "lora_examples": lora_n,
         "with_maintainer_voice": with_voice,
         "bounty_hunter_prs": hunters,
+        "high_complexity": complex_n,
         "by_repo": by_repo,
         "by_verdict": by_verdict,
+        "by_tag": dict(sorted(by_tag.items(), key=lambda x: -x[1])[:15]),
     }

@@ -1,0 +1,16 @@
+# High-value PRs with rich human review — seed for complex archetypes.
+# Archivist collects these even if they don't match recent-list pagination.
+
+prs:
+  - repo: tinygrad/tinygrad
+    number: 14595
+    tags: [rejected, ai_policy, bounty, mac_perf]
+  - repo: tinygrad/tinygrad
+    number: 14500
+    tags: [complex, ci, kernel]
+  - repo: numpy/numpy
+    number: 25000
+    tags: [large_codebase, numerical]
+  - repo: pydantic/pydantic
+    number: 9000
+    tags: [api_design, validation]
