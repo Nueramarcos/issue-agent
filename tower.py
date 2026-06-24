@@ -71,6 +71,8 @@ def orion_ast_check(ws: Path, changed_py: list[str]) -> tuple[bool, list[str]]:
 
     reasons: list[str] = []
     for rel in changed_py:
+        if not rel.endswith(".py"):
+            continue
         path = ws / rel
         if not path.exists():
             continue
@@ -165,7 +167,8 @@ def tower_review_files(
     else:
         checks["ruff_critical"] = True
 
-    orion_ok, orion_reasons = orion_ast_check(ws, rel_files)
+    py_for_orion = [f for f in rel_files if f.endswith(".py")]
+    orion_ok, orion_reasons = orion_ast_check(ws, py_for_orion)
     checks["orion_ast"] = orion_ok
     reasons.extend(orion_reasons)
 
@@ -229,7 +232,8 @@ def tower_review_workspace(
     else:
         checks["ruff_critical"] = True
 
-    orion_ok, orion_reasons = orion_ast_check(ws, files)
+    py_for_orion = [f for f in files if f.endswith(".py")]
+    orion_ok, orion_reasons = orion_ast_check(ws, py_for_orion)
     checks["orion_ast"] = orion_ok
     reasons.extend(orion_reasons)
 
