@@ -202,8 +202,48 @@ def run(
     )
 
 
+def _gh_issue_view_rest(repo: str, issue_num: str, fields: str) -> dict[str, Any]:
+    """REST fallback when `gh issue view --json` hits GraphQL rate limits."""
+    owner, name = repo.split("/", 1)
+    result = run(["gh", "api", f"repos/{owner}/{name}/issues/{issue_num}"], check=False)
+    if result.returncode != 0 or not (result.stdout or "").strip():
+        raise RuntimeError((result.stderr or "gh api issue failed").strip())
+    raw = json.loads(result.stdout)
+    want = {f.strip() for f in fields.split(",")}
+    out: dict[str, Any] = {}
+    if "title" in want:
+        out["title"] = raw.get("title", "")
+    if "body" in want:
+        out["body"] = raw.get("body") or ""
+    if "state" in want:
+        out["state"] = raw.get("state", "")
+    if "labels" in want:
+        out["labels"] = [{"name": lb["name"]} for lb in raw.get("labels", [])]
+    if "number" in want:
+        out["number"] = raw.get("number")
+    return out
+
+
 def gh_json(args: list[str]) -> Any:
-    result = run(["gh", *args, "--json"] if "--json" not in args else ["gh", *args])
+    cmd = ["gh", *args]
+    if "--json" not in args:
+        cmd.append("--json")
+    result = run(cmd, check=False)
+    if result.returncode == 0 and (result.stdout or "").strip():
+        return json.loads(result.stdout)
+    stderr = (result.stderr or "").lower()
+    graphql_limited = "rate limit" in stderr or "graphql" in stderr
+    if graphql_limited and len(args) >= 5 and args[0] == "issue" and args[1] == "view" and "-R" in args:
+        issue_num = args[2]
+        repo = args[args.index("-R") + 1]
+        fields = args[args.index("--json") + 1] if "--json" in args else "title,body"
+        data = _gh_issue_view_rest(repo, issue_num, fields)
+        log(f"gh_json: REST fallback for {repo}#{issue_num}")
+        return data
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            result.returncode, cmd, output=result.stdout, stderr=result.stderr
+        )
     return json.loads(result.stdout or "null")
 
 
