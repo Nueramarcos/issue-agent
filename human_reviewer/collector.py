@@ -163,7 +163,12 @@ def _pick_maintainer_voice(
     """Prefer APPROVED maintainer comments; fall back to PR thread discourse."""
     candidates: list[tuple[int, str]] = []
     for rev in reviews:
-        author = str(rev.get("author", {}).get("login", rev.get("user", {}).get("login", "")))
+        user = rev.get("user") or {}
+        author = str(
+            (rev.get("author") or {}).get("login", "")
+            if isinstance(rev.get("author"), dict)
+            else (user.get("login", "") if isinstance(user, dict) else "")
+        )
         body = (rev.get("body") or "").strip()
         if not body or author == pr_author:
             continue
@@ -183,7 +188,8 @@ def _pick_maintainer_voice(
         score += min(len(body) // 40, 5)
         candidates.append((score, body[:REVIEW_MAX]))
     for msg in conversation or []:
-        author = str(msg.get("user", {}).get("login", ""))
+        user = msg.get("user") or {}
+        author = str(user.get("login", "") if isinstance(user, dict) else "")
         body = (msg.get("body") or "").strip()
         if not body or author == pr_author:
             continue
@@ -354,8 +360,9 @@ def _has_training_signal(record: dict[str, Any], min_cfg: dict[str, Any] | None 
 
 
 def _normalize_review(rev: dict[str, Any]) -> dict[str, str]:
+    user = rev.get("user") or {}
     return {
-        "author": str(rev.get("user", {}).get("login", "")),
+        "author": str(user.get("login", "") if isinstance(user, dict) else ""),
         "state": str(rev.get("state", "")),
         "body": (rev.get("body") or "").strip()[:REVIEW_MAX],
         "submitted_at": str(rev.get("submitted_at", "")),
@@ -363,8 +370,9 @@ def _normalize_review(rev: dict[str, Any]) -> dict[str, str]:
 
 
 def _normalize_comment(c: dict[str, Any]) -> dict[str, str]:
+    user = c.get("user") or {}
     return {
-        "author": str(c.get("user", {}).get("login", "")),
+        "author": str(user.get("login", "") if isinstance(user, dict) else ""),
         "path": str(c.get("path", "")),
         "body": (c.get("body") or "").strip()[:600],
     }
