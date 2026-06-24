@@ -4087,7 +4087,8 @@ def process_local_queue(max_items: int = 3, *, repo_filter: str | None = None) -
             remaining.append(item)
             continue
         tier = issue_solvability_tier(repo, title, 0)
-        if has_easy and tier == "hard":
+        l2_item = spec_highway_lane({"title": title, "body": item.get("body", "")}) == 2
+        if has_easy and tier == "hard" and not l2_item:
             log(f"skip hard local fix: {repo} — {title[:60]}")
             remaining.append(item)
             continue
@@ -5114,6 +5115,14 @@ def resolve_issue_local(
         known_fix = True
     elif hw_plan and hw_plan.lane in (0, 1) and issue_already_satisfied(ws, issue, hw_plan):
         log(f"local highway already satisfied — {hw_plan.archetype}")
+        append_flight_record(
+            {
+                "outcome": "highway_satisfied",
+                "repo": repo,
+                "archetype": hw_plan.archetype,
+                "handler": hw_plan.handler,
+            }
+        )
         record_success(repo, "local", title[:80], spec_title=title)
         return 0
     else:

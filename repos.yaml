@@ -38,7 +38,7 @@ repos:
       package_root: Orion
       l0_enabled: true
       l1_enabled: true
-      l2_enabled: false
+      l2_enabled: true
 
   - name: Nueramarcos/forge-ci-reliability
     branch: main
@@ -55,7 +55,7 @@ repos:
       package_root: forge
       l0_enabled: true
       l1_enabled: true
-      l2_enabled: false
+      l2_enabled: true
 
   - name: Nueramarcos/nexus-vision-engine
     branch: main
@@ -73,7 +73,7 @@ repos:
       package_root: nexus
       l0_enabled: true
       l1_enabled: true
-      l2_enabled: false
+      l2_enabled: true
 
   - name: Nueramarcos/vertex-sim-core
     branch: main
@@ -89,7 +89,7 @@ repos:
       package_root: Vertex
       l0_enabled: true
       l1_enabled: true
-      l2_enabled: false
+      l2_enabled: true
 
   - name: Nueramarcos/tinygrad
     branch: master

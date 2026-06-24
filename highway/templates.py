@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from highway.golden import GOLDEN_HANDLERS, apply_golden
+from highway.junk import junk_targets
 from highway.package_root import detect_package_root
 
 
@@ -205,16 +206,9 @@ def apply_template(handler: str, ws: Path, issue: dict[str, Any], repo_meta: dic
         if "junk" not in title and "accidental" not in title:
             return False
         removed = False
-        for line in (issue.get("body") or "").splitlines():
-            line = line.strip().lstrip("-").strip()
-            if not line or line.startswith("#"):
-                continue
-            if line.startswith("Only ") or line.startswith("Delete "):
-                continue
-            candidate = ws / line
-            if candidate.exists() and candidate.is_file():
-                candidate.unlink()
-                removed = True
+        for candidate in junk_targets(ws, issue):
+            candidate.unlink()
+            removed = True
         return removed
 
     if handler in GOLDEN_HANDLERS:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from highway.junk import junk_targets
 from highway.router import HighwayPlan
 
 
@@ -49,4 +50,6 @@ def issue_already_satisfied(ws: Path, issue: dict[str, Any], plan: HighwayPlan) 
         for init in ws.rglob("__init__.py"):
             if "__version__" in init.read_text(encoding="utf-8", errors="replace"):
                 return True
+    if arch == "junk":
+        return not junk_targets(ws, issue)
     return False

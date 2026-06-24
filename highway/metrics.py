@@ -39,10 +39,10 @@ def load_recent_entries(hours: int = 24) -> list[dict[str, Any]]:
 
 
 def highway_wins_by_repo(hours: int = 48) -> dict[str, int]:
-    """Count L0+L1 highway successes per repo in the recent window."""
+    """Count L0+L1+satisfied highway successes per repo in the recent window."""
     wins: dict[str, int] = {}
     for row in load_recent_entries(hours):
-        if row.get("outcome") not in ("highway_l0", "highway_l1"):
+        if row.get("outcome") not in ("highway_l0", "highway_l1", "highway_satisfied"):
             continue
         repo = str(row.get("repo") or "")
         if repo:
@@ -79,11 +79,15 @@ def highway_stats(hours: int = 24) -> dict[str, Any]:
 
     l0_hits = outcomes.get("highway_l0", 0)
     l1_hits = outcomes.get("highway_l1", 0)
-    highway_fixes = l0_hits + l1_hits + aider_runs
+    satisfied_hits = outcomes.get("highway_satisfied", 0)
+    highway_wins = l0_hits + l1_hits + satisfied_hits
+    highway_fixes = highway_wins + aider_runs
+    applied_share = l0_hits + l1_hits
     return {
         "hours": hours,
         "l0_hits": l0_hits,
         "l1_hits": l1_hits,
+        "satisfied_hits": satisfied_hits,
         "l0_handlers": dict(l0_handlers.most_common(12)),
         "l1_handlers": dict(l1_handlers.most_common(8)),
         "l0_repos": dict(repos_l0.most_common(8)),
@@ -92,7 +96,8 @@ def highway_stats(hours: int = 24) -> dict[str, Any]:
         "aider_attempts": aider_runs,
         "merged_pr": merges,
         "ollama_calls_saved": l0_hits,
-        "highway_share_pct": round(100 * (l0_hits + l1_hits) / highway_fixes, 1) if highway_fixes else 0.0,
+        "highway_share_pct": round(100 * highway_wins / highway_fixes, 1) if highway_fixes else 0.0,
+        "highway_applied_share_pct": round(100 * applied_share / highway_fixes, 1) if highway_fixes else 0.0,
         "l0_share_pct": round(100 * l0_hits / highway_fixes, 1) if highway_fixes else 0.0,
         "outcomes": dict(outcomes.most_common(15)),
     }
@@ -104,8 +109,10 @@ def format_stats_report(stats: dict[str, Any]) -> str:
         "",
         f"  L0 hits (0 Ollama):     {stats['l0_hits']}",
         f"  L1 hits (micro-LLM):    {stats.get('l1_hits', 0)}",
+        f"  Satisfied (0 diff):     {stats.get('satisfied_hits', 0)}",
         f"  Aider attempts:          {stats['aider_attempts']}",
-        f"  Highway share (L0+L1):   {stats.get('highway_share_pct', stats.get('l0_share_pct', 0))}%",
+        f"  Highway share (all):     {stats.get('highway_share_pct', stats.get('l0_share_pct', 0))}%",
+        f"  Highway share (applied): {stats.get('highway_applied_share_pct', stats.get('highway_share_pct', 0))}%",
         f"  Ollama calls saved:      {stats['ollama_calls_saved']}",
         f"  Merged PRs (recorder):   {stats['merged_pr']}",
     ]
