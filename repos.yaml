@@ -33,6 +33,10 @@ repos:
       stack: python
       bootstrap:
         - python3 -m pip install -q pytest
+    highway:
+      package_root: Orion
+      l0_enabled: true
+      l2_enabled: false
 
   - name: Nueramarcos/forge-ci-reliability
     branch: main

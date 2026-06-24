@@ -55,7 +55,17 @@ from prompt_loader import (
     load_vision,
     prompt_inventory,
 )
-from highway import HighwayPlan, apply_lane0, is_highway_lane0, route_issue
+from highway import (
+    HighwayPlan,
+    admit_seed,
+    admit_to_aider,
+    apply_lane0,
+    format_stats_report,
+    highway_stats,
+    is_highway_lane0,
+    route_issue,
+    spec_highway_lane,
+)
 from radar import enrich_opportunity
 from tower import TowerVerdict, tower_block_comment, tower_review_workspace
 
@@ -1425,6 +1435,24 @@ def resolve_issue(repo: str, issue_num: int, *, dry_run: bool = False) -> int:
                 log(f"highway blocked — {hw_plan.skip_reason}")
                 return 1
         if not applied_l0:
+            meta = repo_entry(repo)
+            hw_plan = route_issue(repo, issue, meta)
+            if hw_plan.lane >= 2:
+                solv = compute_repo_solvability(repo, meta, use_cache=True)
+                ok, reason = admit_to_aider(repo, issue, hw_plan, meta, solv)
+                if not ok:
+                    log(f"highway admission denied — {reason}")
+                    append_flight_record(
+                        {
+                            "outcome": "highway_skip",
+                            "repo": repo,
+                            "issue_num": issue_num,
+                            "reason": reason,
+                            "archetype": hw_plan.archetype,
+                        }
+                    )
+                    record_failure(repo, "issue", str(issue_num), f"highway admission: {reason}")
+                    return 1
             _run_aider_attempt(ws, repo, cfg, issue_num, issue, feedback=feedback, plan=plan)
         gates_ok, feedback = _local_gates(ws, repo, cfg, issue_num, issue, base=base)
         if gates_ok:
@@ -1554,6 +1582,28 @@ def cmd_solvability(args: argparse.Namespace) -> int:
         )
     print(f"\nfull state: {SOLVABILITY_STATE}")
     return 0
+
+
+def cmd_highway(args: argparse.Namespace) -> int:
+    """Solvability Highway metrics and admission policy."""
+    if args.action == "stats":
+        print(format_stats_report(highway_stats(args.hours)))
+        return 0
+    if args.action == "lanes":
+        backlog = load_collector_backlog()
+        counts: dict[int, int] = {0: 0, 1: 0, 2: 0}
+        for specs in backlog.values():
+            for spec in specs:
+                lane = spec_highway_lane(spec)
+                key = lane if lane in counts else 2
+                counts[key] = counts.get(key, 0) + 1
+        print("Backlog highway lanes:")
+        print(f"  L0 (auto-seed):  {counts.get(0, 0)}")
+        print(f"  L1 (micro-LLM):  {counts.get(1, 0)}")
+        print(f"  L2 (Aider):      {counts.get(2, 0)}")
+        return 0
+    print(f"unknown highway action: {args.action}")
+    return 1
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -2075,13 +2125,22 @@ def is_seed_kind_blocked(repo: str, title: str) -> bool:
     return is_failure_blocked(repo, "seed", issue_spec_kind(title))
 
 
-def is_spec_seedable(repo: str, title: str) -> bool:
+def is_spec_seedable(repo: str, title: str, *, spec: dict[str, Any] | None = None) -> bool:
     if not is_seed_kind_blocked(repo, title):
         return True
     kind = issue_spec_kind(title)
     log(f"skip seed {repo}: {kind} blocked after repeated no_commits")
     log_activity("seed_skip", repo, kind)
     return False
+
+
+def is_highway_seedable(repo: str, spec: dict[str, Any]) -> bool:
+    """Highway admission for factory/collect — L0 auto-seed only."""
+    ok, reason = admit_seed(repo, spec, repo_entry(repo))
+    if not ok:
+        log(f"highway seed skip {repo}: {reason}")
+        log_activity("highway_seed_skip", repo, reason[:80])
+    return ok
 
 
 def bump_seed_kind_no_commits(repo: str, seed_kind: str, detail: str) -> None:
@@ -2751,7 +2810,11 @@ def worker_interval_secs(base_interval: int, solv: dict[str, Any]) -> int:
 
 def factory_max_for_repo(solv: dict[str, Any], default_max: int) -> int:
     score = float(solv.get("score", 0))
-    if score < 15:
+    tier = solv.get("tier", "cold")
+    fails_6h = int((solv.get("factors") or {}).get("no_commits_6h", 0))
+    if score < 45 or tier == "cold":
+        return 0
+    if fails_6h >= 10:
         return 0
     if score >= 75:
         return min(default_max + 1, 4)
@@ -3612,7 +3675,9 @@ def seed_backlog_issues(repo: str, max_new: int = 2) -> list[int]:
             break
         if spec["title"] in titles:
             continue
-        if not is_spec_seedable(repo, spec["title"]):
+        if not is_spec_seedable(repo, spec["title"], spec=spec):
+            continue
+        if not is_highway_seedable(repo, spec):
             continue
         num = create_collected_issue(repo, spec)
         if num:
@@ -3657,7 +3722,9 @@ def cmd_collect(args: argparse.Namespace) -> int:
                 break
             if spec["title"] in titles:
                 continue
-            if not is_spec_seedable(repo, spec["title"]):
+            if not is_spec_seedable(repo, spec["title"], spec=spec):
+                continue
+            if not is_highway_seedable(repo, spec):
                 continue
             if args.dry_run:
                 mode = "local" if use_local else "github"
@@ -4135,7 +4202,9 @@ def cmd_factory(args: argparse.Namespace) -> int:
             for spec in backlog_specs[:max_for_repo]:
                 if spec["title"] in titles:
                     continue
-                if not is_spec_seedable(repo, spec["title"]):
+                if not is_spec_seedable(repo, spec["title"], spec=spec):
+                    continue
+                if not is_highway_seedable(repo, spec):
                     continue
                 enqueue_local(repo, spec)
                 log(f"factory local enqueue: {repo} — {spec['title'][:60]}")
@@ -5541,6 +5610,14 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("solvability", help="Score fleet repos by merge likelihood")
     s.add_argument("repo", nargs="?", help="Optional single repo")
     s.set_defaults(func=cmd_solvability)
+
+    hw = sub.add_parser("highway", help="Solvability Highway — L0 stats and backlog lanes")
+    hw_sub = hw.add_subparsers(dest="action", required=True)
+    r = hw_sub.add_parser("stats", help="L0 hits, Ollama saves, merge yield")
+    r.add_argument("--hours", type=int, default=24)
+    r.set_defaults(func=cmd_highway, action="stats")
+    r = hw_sub.add_parser("lanes", help="Count backlog items per highway lane")
+    r.set_defaults(func=cmd_highway, action="lanes")
 
     s = sub.add_parser("failures", help="Show failure ledger and hints")
     s.set_defaults(func=lambda _: cmd_status(argparse.Namespace()) or 0)

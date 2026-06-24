@@ -1,47 +1,24 @@
-# Airport — demo proof lane + fleet (notify-zero: failures stay local)
+# Airport — demo + forge (L0 highway lanes; L2 disabled on forge)
 enabled: true
-park_minutes: 3
+park_minutes: 5
 local_first: true
 wait_for_checks: true
-factory_interval_secs: 300
+factory_interval_secs: 600
 ci_heal_interval_secs: 900
 factory_max_per_repo: 2
-ci_heal_max: 2
-failure_skip_hours: 4
+ci_heal_max: 1
+failure_skip_hours: 6
 max_concurrent_aider: 1
 
 lanes:
   - repo: Nueramarcos/agent-habitat-demo
     kind: github
     interval: 300
-    collect_max: 2
+    collect_max: 1
     fix_max: 1
 
   - repo: Nueramarcos/forge-ci-reliability
     kind: github
-    interval: 180
-    collect_max: 2
-    fix_max: 1
-
-  - repo: Nueramarcos/nexus-vision-engine
-    kind: github
-    interval: 180
-    collect_max: 2
-    fix_max: 1
-
-  - repo: Nueramarcos/vertex-sim-core
-    kind: github
-    interval: 240
-    collect_max: 2
-    fix_max: 1
-
-  - repo: Nueramarcos/orion-ai-agent
-    kind: github
-    interval: 300
-    collect_max: 2
-    fix_max: 1
-
-  - kind: roam
-    interval: 180
+    interval: 360
     collect_max: 2
     fix_max: 1
