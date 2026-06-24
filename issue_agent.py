@@ -103,6 +103,8 @@ class RepoConfig:
     tower_enabled: bool = True
     human_tower_enabled: bool = True
     human_tower_model: str = "customs-reviewer-ft-1.5b"
+    plan_enabled: bool = True
+    max_fix_retries: int = 3
     prompt_path: str | None = None
     triage_prompt_path: str | None = None
 
@@ -314,6 +316,10 @@ def repo_config(repo: str, ws: Path) -> RepoConfig:
         cfg.human_tower_enabled = bool(meta["human_tower_enabled"])
     if meta.get("human_tower_model"):
         cfg.human_tower_model = str(meta["human_tower_model"])
+    if "plan_enabled" in meta:
+        cfg.plan_enabled = bool(meta["plan_enabled"])
+    if meta.get("max_fix_retries") is not None:
+        cfg.max_fix_retries = int(meta["max_fix_retries"])
     if meta.get("prompt_path"):
         cfg.prompt_path = str(meta["prompt_path"])
     if meta.get("triage_prompt_path"):
@@ -340,6 +346,10 @@ def repo_config(repo: str, ws: Path) -> RepoConfig:
                 cfg.human_tower_enabled = bool(data["human_tower_enabled"])
             if data.get("human_tower_model"):
                 cfg.human_tower_model = str(data["human_tower_model"])
+            if "plan_enabled" in data:
+                cfg.plan_enabled = bool(data["plan_enabled"])
+            if data.get("max_fix_retries") is not None:
+                cfg.max_fix_retries = int(data["max_fix_retries"])
             if data.get("prompt_path"):
                 cfg.prompt_path = str(data["prompt_path"])
             if data.get("triage_prompt_path"):
@@ -1201,6 +1211,123 @@ def finalize_pr(
     return True, pr_url
 
 
+def _load_habitat_plan(ws: Path) -> dict[str, Any] | None:
+    env_path = os.environ.get("HABITAT_PLAN_PATH")
+    if env_path and Path(env_path).exists():
+        try:
+            return json.loads(Path(env_path).read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            pass
+    try:
+        from habitat_planner.plan import load_plan
+
+        return load_plan(ws)
+    except ImportError:
+        return None
+
+
+def _plan_block(plan: dict[str, Any] | None) -> str:
+    if not plan:
+        return ""
+    try:
+        from habitat_planner.plan import plan_prompt_block
+
+        return plan_prompt_block(plan)
+    except ImportError:
+        return ""
+
+
+def _run_aider_attempt(
+    ws: Path,
+    repo: str,
+    cfg: RepoConfig,
+    issue_num: int,
+    issue: dict[str, Any],
+    *,
+    feedback: str = "",
+    plan: dict[str, Any] | None = None,
+) -> None:
+    issue_text = f"#{issue_num}: {issue['title']}\n{issue.get('body') or ''}"
+    extra = f"\n\n## Reviewer feedback (address all points)\n{feedback}\n" if feedback else ""
+    aider_msg = textwrap.dedent(
+        f"""
+        {solver_prompt(repo, issue.get("title", ""), cfg)}
+        {_plan_block(plan)}
+
+        Fix GitHub issue in repository {repo}.
+        Touch at most {cfg.max_files} files. Run tests before finishing.
+
+        {issue_text}
+        {extra}
+        """
+    ).strip()
+    aider_cmd = [
+        str(AIDER),
+        "--model",
+        cfg.model,
+        "--yes-always",
+        "--auto-commits",
+        "--no-show-model-warnings",
+        "--message",
+        aider_msg,
+    ]
+    with acquire_aider_slot():
+        aider_result = run(aider_cmd, cwd=ws, check=False)
+    log(aider_result.stdout[-4000:] if aider_result.stdout else "")
+    if aider_result.stderr:
+        log(aider_result.stderr[-2000:])
+    sanitize_agent_artifacts(ws)
+
+
+def _local_gates(
+    ws: Path,
+    repo: str,
+    cfg: RepoConfig,
+    issue_num: int,
+    issue: dict[str, Any],
+    *,
+    base: str,
+) -> tuple[bool, str]:
+    """Tests + Tower + Human Tower — all local, no GitHub. Returns (ok, retry_feedback)."""
+    test_cmd = detect_test_command(ws, cfg.test_command)
+    passed, test_out = run_tests(ws, test_cmd)
+    if not passed:
+        return False, f"Tests failed:\n{test_out[-2500:]}"
+
+    if not has_branch_changes(ws, base):
+        return False, "No file changes produced — implement the plan with a minimal diff."
+
+    if cfg.tower_enabled:
+        verdict = tower_review(ws, repo, cfg, base_branch=base, issue_summary=issue.get("title", ""))
+        if not verdict.passed:
+            return False, "Tower rejected:\n" + "\n".join(verdict.reasons)
+        append_flight_record(
+            {
+                "outcome": "tower_pass",
+                "repo": repo,
+                "scope": "issue",
+                "ident": str(issue_num),
+                "issue_num": issue_num,
+                "confidence": verdict.confidence,
+                "files": verdict.files_changed,
+            }
+        )
+
+    ht = human_tower_gate(
+        ws,
+        repo,
+        cfg,
+        base_branch=base,
+        issue_summary=issue.get("title", ""),
+        issue_num=issue_num,
+    )
+    if ht is not None and not ht.passed:
+        fb = ht.review_comment or "; ".join(ht.reasons)
+        return False, f"Human Tower rejected:\n{fb}"
+
+    return True, ""
+
+
 def resolve_issue(repo: str, issue_num: int, *, dry_run: bool = False) -> int:
     base_ws = workspace_for(repo)
     ensure_repo(repo, base_ws)
@@ -1226,119 +1353,62 @@ def resolve_issue(repo: str, issue_num: int, *, dry_run: bool = False) -> int:
     if not AIDER.exists():
         raise RuntimeError(f"Aider not found at {AIDER}")
 
-    aider_msg = textwrap.dedent(
-        f"""
-        {solver_prompt(repo, issue.get("title", ""), cfg)}
-
-        Fix GitHub issue in repository {repo}.
-
-        {issue_text}
-        """
-    ).strip()
-
-    aider_cmd = [
-        str(AIDER),
-        "--model",
-        cfg.model,
-        "--yes-always",
-        "--auto-commits",
-        "--no-show-model-warnings",
-        "--message",
-        aider_msg,
-    ]
-    with acquire_aider_slot():
-        aider_result = run(aider_cmd, cwd=ws, check=False)
-    log(aider_result.stdout[-4000:] if aider_result.stdout else "")
-    if aider_result.stderr:
-        log(aider_result.stderr[-2000:])
-    sanitize_agent_artifacts(ws)
-    dirty = run(["git", "status", "--porcelain"], cwd=ws, check=False)
-    if dirty.stdout and dirty.stdout.strip():
-        run(["git", "add", "-A"], cwd=ws, check=False)
-        run(["git", "commit", "-m", f"chore: sanitize agent artifacts for #{issue_num}"], cwd=ws, check=False)
-
-    test_cmd = detect_test_command(ws, cfg.test_command)
-    passed, test_out = run_tests(ws, test_cmd)
-    if not passed:
-        comment = (
-            f"🤖 **Issue Agent** attempted a fix but tests failed.\n\n"
-            f"Branch: `{branch}` (local workspace only)\n\n"
-            f"```\n{test_out[-3000:]}\n```"
-        )
-        maybe_issue_comment(repo, issue_num, comment, success=False)
-        log(f"tests failed for #{issue_num}")
-        record_failure(repo, "issue", str(issue_num), f"tests failed: {test_out[-300:]}", issue_num=issue_num)
-        return 1
+    plan: dict[str, Any] | None = None
+    if cfg.plan_enabled or os.environ.get("HABITAT_PLAN_PATH"):
+        plan = _load_habitat_plan(ws)
+        if plan:
+            log(f"plan loaded — confidence={plan.get('confidence', '?')}")
 
     base = default_branch(repo)
-    if not has_branch_changes(ws, base):
-        comment = "🤖 **Issue Agent** — no file changes produced; skipping PR."
-        maybe_issue_comment(repo, issue_num, comment, success=False)
-        log(f"no commits for #{issue_num} — aider produced no changes")
-        record_failure(
-            repo,
-            "issue",
-            str(issue_num),
-            "no commits — aider produced no changes",
-            issue_num=issue_num,
-            spec_title=issue["title"],
-        )
-        return 1
-
-    if cfg.tower_enabled:
-        verdict = tower_review(
-            ws,
-            repo,
-            cfg,
-            base_branch=base,
-            issue_summary=issue.get("title", ""),
-        )
-        if not verdict.passed:
-            maybe_issue_comment(repo, issue_num, tower_block_comment(verdict), success=False)
-            record_failure(
-                repo,
-                "issue",
-                str(issue_num),
-                "tower rejected: " + "; ".join(verdict.reasons)[:400],
-                issue_num=issue_num,
-                spec_title=issue["title"],
+    max_retries = max(1, int(os.environ.get("HABITAT_MAX_FIX_RETRIES", cfg.max_fix_retries)))
+    feedback = ""
+    gates_ok = False
+    for attempt in range(1, max_retries + 1):
+        log(f"fix attempt {attempt}/{max_retries} for #{issue_num}")
+        _run_aider_attempt(ws, repo, cfg, issue_num, issue, feedback=feedback, plan=plan)
+        gates_ok, feedback = _local_gates(ws, repo, cfg, issue_num, issue, base=base)
+        if gates_ok:
+            append_flight_record(
+                {
+                    "outcome": "fix_success",
+                    "repo": repo,
+                    "issue_num": issue_num,
+                    "attempt": attempt,
+                    "max_retries": max_retries,
+                }
             )
-            return 1
+            break
+        log(f"attempt {attempt} failed locally — retrying" if attempt < max_retries else "all attempts exhausted")
         append_flight_record(
             {
-                "outcome": "tower_pass",
+                "outcome": "fix_retry",
                 "repo": repo,
-                "scope": "issue",
-                "ident": str(issue_num),
                 "issue_num": issue_num,
-                "confidence": verdict.confidence,
-                "files": verdict.files_changed,
+                "attempt": attempt,
+                "detail": feedback[:400],
             }
         )
 
-    ht = human_tower_gate(
-        ws,
-        repo,
-        cfg,
-        base_branch=base,
-        issue_summary=issue.get("title", ""),
-        issue_num=issue_num,
-    )
-    if ht is not None and not ht.passed:
-        block_fn = getattr(ht, "_block_comment", None)
-        body = block_fn(ht) if callable(block_fn) else ht.review_comment
-        maybe_issue_comment(repo, issue_num, body, success=False)
+    if not gates_ok:
+        log(f"fix failed after {max_retries} local attempts — no GitHub activity")
         record_failure(
             repo,
             "issue",
             str(issue_num),
-            "human tower rejected: " + (ht.review_comment or "; ".join(ht.reasons))[:400],
+            f"local retry exhausted: {feedback[:400]}",
             issue_num=issue_num,
             spec_title=issue["title"],
         )
         return 1
 
-    # push + draft PR
+    plan_section = ""
+    if plan:
+        plan_section = (
+            f"\n\n## Habitat Plan\n{plan.get('repo_summary', '')}\n"
+            f"**Fix:** {plan.get('solution_plan', '')}\n"
+        )
+
+    # push + draft PR (only after all local gates green)
     run(["git", "push", "-u", "origin", branch, "--force-with-lease"], cwd=ws, check=False)
     pr_args = [
         "gh",
@@ -1351,9 +1421,9 @@ def resolve_issue(repo: str, issue_num: int, *, dry_run: bool = False) -> int:
         "--title",
         f"Fix #{issue_num}: {issue['title'][:70]}",
         "--body",
-        f"Automated local fix for #{issue_num}.\n\nCloses #{issue_num}\n\n---\n*Generated by Issue Agent on Nueramarcos*",
+        f"Automated local fix for #{issue_num}.\n\nCloses #{issue_num}{plan_section}\n\n---\n*Generated by Issue Agent on Nueramarcos*",
     ]
-    if cfg.draft_pr:
+    if cfg.draft_pr or os.environ.get("HABITAT_DRAFT_PR", "0") == "1":
         pr_args.append("--draft")
     pr = run(pr_args, cwd=ws, check=False)
     pr_url = (pr.stdout or "").strip()
@@ -5125,6 +5195,35 @@ def cmd_tower(args: argparse.Namespace) -> int:
     return 0 if verdict.passed else 1
 
 
+def cmd_plan(args: argparse.Namespace) -> int:
+    load_secrets()
+    from habitat_planner.plan import generate_plan, plan_path_for
+
+    repo = args.repo
+    issue_num = int(args.issue)
+    base_ws = workspace_for(repo)
+    ensure_repo(repo, base_ws)
+    ws = workspace_for(repo, issue_num)
+    if ws != base_ws:
+        if ws.exists():
+            run(["rm", "-rf", str(ws)], check=False)
+        run(["cp", "-a", str(base_ws), str(ws)])
+    run(["git", "checkout", "-B", f"fix/issue-{issue_num}"], cwd=ws)
+    bootstrap_habitat(ws, repo)
+    issue = gh_json(["issue", "view", str(issue_num), "-R", repo, "--json", "title,body"])
+    plan = generate_plan(
+        ws,
+        repo,
+        issue_num=issue_num,
+        issue_title=issue.get("title", ""),
+        issue_body=issue.get("body") or "",
+        model=args.model,
+    )
+    print(json.dumps(plan, indent=2))
+    print(f"\nplan written: {plan_path_for(ws)}")
+    return 0
+
+
 def cmd_relentless(args: argparse.Namespace) -> int:
     load_secrets()
     for round_num in range(1, args.rounds + 1):
@@ -5186,6 +5285,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("issue", type=int, nargs="?")
     s.add_argument("--apply-label", action="store_true", help="Add agent-triage or agent-skip labels")
     s.set_defaults(func=cmd_triage)
+
+    s = sub.add_parser("plan", help="Generate Habitat fix plan (local only, no PR)")
+    s.add_argument("repo")
+    s.add_argument("issue", type=int)
+    s.add_argument("--model", default="qwen2.5-coder:1.5b")
+    s.set_defaults(func=cmd_plan)
 
     s = sub.add_parser("fix", help="Fix one issue and open draft PR")
     s.add_argument("repo")
