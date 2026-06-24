@@ -90,7 +90,6 @@ def _recommendations(
         actions.append(
             f"Run: issue-agent highway revive Nueramarcos/agent-habitat-demo — {demo_failures} failures"
         )
-    if not actions:
     if not any("revive" in a for a in actions):
         actions.append("Fleet healthy — enable L2 selectively on warm repos")
     return actions
