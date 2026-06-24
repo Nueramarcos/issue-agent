@@ -41,8 +41,10 @@ def load_recent_entries(hours: int = 24) -> list[dict[str, Any]]:
 def highway_stats(hours: int = 24) -> dict[str, Any]:
     rows = load_recent_entries(hours)
     outcomes = Counter()
-    handlers = Counter()
+    l0_handlers = Counter()
+    l1_handlers = Counter()
     repos_l0 = Counter()
+    repos_l1 = Counter()
     skips = Counter()
     aider_runs = 0
     merges = 0
@@ -51,8 +53,11 @@ def highway_stats(hours: int = 24) -> dict[str, Any]:
         outcome = row.get("outcome", "")
         outcomes[outcome] += 1
         if outcome == "highway_l0":
-            handlers[row.get("handler", "?")] += 1
+            l0_handlers[row.get("handler", "?")] += 1
             repos_l0[row.get("repo", "?")] += 1
+        if outcome == "highway_l1":
+            l1_handlers[row.get("handler", "?")] += 1
+            repos_l1[row.get("repo", "?")] += 1
         if outcome == "highway_skip":
             skips[row.get("reason", "?")] += 1
         if outcome in ("fix_retry", "fix_success") and row.get("attempt", 1) == 1:
@@ -61,17 +66,22 @@ def highway_stats(hours: int = 24) -> dict[str, Any]:
             merges += 1
 
     l0_hits = outcomes.get("highway_l0", 0)
-    total_fixes = l0_hits + aider_runs
+    l1_hits = outcomes.get("highway_l1", 0)
+    highway_fixes = l0_hits + l1_hits + aider_runs
     return {
         "hours": hours,
         "l0_hits": l0_hits,
-        "l0_handlers": dict(handlers.most_common(12)),
+        "l1_hits": l1_hits,
+        "l0_handlers": dict(l0_handlers.most_common(12)),
+        "l1_handlers": dict(l1_handlers.most_common(8)),
         "l0_repos": dict(repos_l0.most_common(8)),
+        "l1_repos": dict(repos_l1.most_common(8)),
         "highway_skips": dict(skips.most_common(8)),
         "aider_attempts": aider_runs,
         "merged_pr": merges,
         "ollama_calls_saved": l0_hits,
-        "l0_share_pct": round(100 * l0_hits / total_fixes, 1) if total_fixes else 0.0,
+        "highway_share_pct": round(100 * (l0_hits + l1_hits) / highway_fixes, 1) if highway_fixes else 0.0,
+        "l0_share_pct": round(100 * l0_hits / highway_fixes, 1) if highway_fixes else 0.0,
         "outcomes": dict(outcomes.most_common(15)),
     }
 
@@ -81,8 +91,9 @@ def format_stats_report(stats: dict[str, Any]) -> str:
         f"Solvability Highway — last {stats['hours']}h",
         "",
         f"  L0 hits (0 Ollama):     {stats['l0_hits']}",
+        f"  L1 hits (micro-LLM):    {stats.get('l1_hits', 0)}",
         f"  Aider attempts:          {stats['aider_attempts']}",
-        f"  L0 share of fixes:       {stats['l0_share_pct']}%",
+        f"  Highway share (L0+L1):   {stats.get('highway_share_pct', stats.get('l0_share_pct', 0))}%",
         f"  Ollama calls saved:      {stats['ollama_calls_saved']}",
         f"  Merged PRs (recorder):   {stats['merged_pr']}",
     ]
@@ -90,6 +101,11 @@ def format_stats_report(stats: dict[str, Any]) -> str:
         lines.append("")
         lines.append("  L0 handlers:")
         for k, v in stats["l0_handlers"].items():
+            lines.append(f"    {v:4d}  {k}")
+    if stats.get("l1_handlers"):
+        lines.append("")
+        lines.append("  L1 handlers:")
+        for k, v in stats["l1_handlers"].items():
             lines.append(f"    {v:4d}  {k}")
     if stats.get("highway_skips"):
         lines.append("")
@@ -100,5 +116,10 @@ def format_stats_report(stats: dict[str, Any]) -> str:
         lines.append("")
         lines.append("  L0 by repo:")
         for k, v in stats["l0_repos"].items():
+            lines.append(f"    {v:4d}  {k}")
+    if stats.get("l1_repos"):
+        lines.append("")
+        lines.append("  L1 by repo:")
+        for k, v in stats["l1_repos"].items():
             lines.append(f"    {v:4d}  {k}")
     return "\n".join(lines)

@@ -28,14 +28,41 @@ def _highway_meta(repo_meta: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def admit_seed(repo: str, spec: dict[str, Any], repo_meta: dict[str, Any] | None) -> tuple[bool, str]:
-    """Factory/collect may only auto-seed L0 issues (Phase 2 policy)."""
+    """Factory/collect may auto-seed L0 and L1 issues (L2 blocked)."""
     lane = spec_highway_lane(spec)
     archetype = detect_archetype(spec.get("title", ""), spec.get("body", ""))
-    if lane != 0:
-        return False, f"auto-seed L0 only (lane={lane}, archetype={archetype})"
     hw = _highway_meta(repo_meta)
-    if not hw.get("l0_enabled", True):
-        return False, "L0 disabled for repo"
+    if lane == 0:
+        if not hw.get("l0_enabled", True):
+            return False, "L0 disabled for repo"
+        return True, ""
+    if lane == 1:
+        if not hw.get("l1_enabled", True):
+            return False, "L1 disabled for repo"
+        return True, ""
+    return False, f"auto-seed L0/L1 only (lane={lane}, archetype={archetype})"
+
+
+def admit_l1(
+    repo: str,
+    issue: dict[str, Any],
+    plan: HighwayPlan,
+    repo_meta: dict[str, Any] | None,
+    solv: dict[str, Any] | None = None,
+) -> tuple[bool, str]:
+    """Gate micro-LLM spend — cheaper than Aider but not free."""
+    if plan.lane != 1:
+        return False, f"lane {plan.lane} is not L1"
+
+    hw = _highway_meta(repo_meta)
+    if not hw.get("l1_enabled", True):
+        return False, "L1 disabled for repo"
+
+    if solv:
+        fails_6h = int((solv.get("factors") or {}).get("no_commits_6h", 0))
+        if fails_6h >= 8:
+            return False, f"no_commits burn ({fails_6h}/6h) — highway cooldown"
+
     return True, ""
 
 

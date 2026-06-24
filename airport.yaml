@@ -1,4 +1,4 @@
-# Airport — demo + forge (L0 highway lanes; L2 disabled on forge)
+# Airport — demo + forge + orion (highway L0/L1; L2 disabled on forge/orion)
 enabled: true
 park_minutes: 5
 local_first: true
@@ -20,5 +20,11 @@ lanes:
   - repo: Nueramarcos/forge-ci-reliability
     kind: github
     interval: 360
+    collect_max: 2
+    fix_max: 1
+
+  - repo: Nueramarcos/orion-ai-agent
+    kind: github
+    interval: 420
     collect_max: 2
     fix_max: 1

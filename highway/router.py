@@ -12,6 +12,7 @@ except ImportError:
     yaml = None  # type: ignore
 
 from highway.archetype import detect_archetype, is_lane0_candidate
+from highway.micro import apply_micro
 from highway.templates import apply_template
 
 REGISTRY_PATH = Path(__file__).resolve().parent / "registry.yaml"
@@ -77,12 +78,24 @@ def route_issue(
         )
 
     if lane == 1:
-        return HighwayPlan(
-            lane=1,
-            archetype=archetype,
-            handler=handler,
-            ollama_budget=500,
-        )
+        if highway and highway.get("l1_enabled") is False:
+            if highway.get("l2_enabled") is False:
+                return HighwayPlan(
+                    lane=-1,
+                    archetype=archetype,
+                    handler="skip",
+                    skip_reason="L1 disabled — no L2 fallback",
+                    ollama_budget=0,
+                )
+            lane = 2
+            handler = "aider"
+        else:
+            return HighwayPlan(
+                lane=1,
+                archetype=archetype,
+                handler=handler,
+                ollama_budget=500,
+            )
 
     return HighwayPlan(
         lane=2,
@@ -103,3 +116,17 @@ def apply_lane0(ws: Path, issue: dict[str, Any], plan: HighwayPlan, repo_meta: d
     if plan.lane != 0:
         return False
     return apply_template(plan.handler, ws, issue, repo_meta)
+
+
+def apply_lane1(
+    ws: Path,
+    issue: dict[str, Any],
+    plan: HighwayPlan,
+    repo_meta: dict[str, Any] | None,
+    *,
+    repo: str = "",
+) -> bool:
+    """Run lane-1 micro-LLM handler. Returns True if files changed."""
+    if plan.lane != 1:
+        return False
+    return apply_micro(plan.handler, ws, issue, repo_meta, repo=repo)

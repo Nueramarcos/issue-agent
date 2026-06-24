@@ -57,9 +57,11 @@ from prompt_loader import (
 )
 from highway import (
     HighwayPlan,
+    admit_l1,
     admit_seed,
     admit_to_aider,
     apply_lane0,
+    apply_lane1,
     format_stats_report,
     highway_stats,
     is_highway_lane0,
@@ -569,6 +571,44 @@ def _try_highway_lane0(ws: Path, repo: str, issue: dict[str, Any]) -> tuple[bool
                 "handler": plan.handler,
                 "archetype": plan.archetype,
                 "ollama_tokens": 0,
+            }
+        )
+        return True, plan
+    return False, plan
+
+
+def _try_highway_lane1(ws: Path, repo: str, issue: dict[str, Any]) -> tuple[bool, HighwayPlan | None]:
+    """Lane 1 — micro-LLM README edits (~500 token budget)."""
+    meta = repo_entry(repo)
+    plan = route_issue(repo, issue, meta)
+    if plan.lane == -1:
+        log(f"highway skip: {plan.skip_reason} (archetype={plan.archetype})")
+        return False, plan
+    if plan.lane != 1:
+        return False, plan
+    solv = compute_repo_solvability(repo, meta, use_cache=True)
+    ok, reason = admit_l1(repo, issue, plan, meta, solv)
+    if not ok:
+        log(f"highway L1 admission denied — {reason}")
+        append_flight_record(
+            {
+                "outcome": "highway_skip",
+                "repo": repo,
+                "reason": reason,
+                "archetype": plan.archetype,
+                "lane": 1,
+            }
+        )
+        return False, plan
+    if apply_lane1(ws, issue, plan, meta, repo=repo):
+        log(f"highway L1 applied — {plan.handler} (archetype={plan.archetype})")
+        append_flight_record(
+            {
+                "outcome": "highway_l1",
+                "repo": repo,
+                "handler": plan.handler,
+                "archetype": plan.archetype,
+                "ollama_budget": plan.ollama_budget,
             }
         )
         return True, plan
@@ -1425,6 +1465,7 @@ def resolve_issue(repo: str, issue_num: int, *, dry_run: bool = False) -> int:
     for attempt in range(1, max_retries + 1):
         log(f"fix attempt {attempt}/{max_retries} for #{issue_num}")
         applied_l0 = False
+        applied_l1 = False
         if attempt == 1:
             applied_l0, hw_plan = _try_highway_lane0(ws, repo, issue)
             if applied_l0:
@@ -1434,7 +1475,13 @@ def resolve_issue(repo: str, issue_num: int, *, dry_run: bool = False) -> int:
             elif hw_plan and hw_plan.lane == -1:
                 log(f"highway blocked — {hw_plan.skip_reason}")
                 return 1
-        if not applied_l0:
+            elif not applied_l0:
+                applied_l1, hw_plan = _try_highway_lane1(ws, repo, issue)
+                if applied_l1:
+                    log("highway L1 — skipping Aider (micro-LLM)")
+                    run(["git", "add", "-A"], cwd=ws, check=False)
+                    run(["git", "commit", "-m", f"Fix issue #{issue_num} (highway L1)"], cwd=ws, check=False)
+        if not applied_l0 and not applied_l1:
             meta = repo_entry(repo)
             hw_plan = route_issue(repo, issue, meta)
             if hw_plan.lane >= 2:
@@ -2135,7 +2182,7 @@ def is_spec_seedable(repo: str, title: str, *, spec: dict[str, Any] | None = Non
 
 
 def is_highway_seedable(repo: str, spec: dict[str, Any]) -> bool:
-    """Highway admission for factory/collect — L0 auto-seed only."""
+    """Highway admission for factory/collect — L0/L1 auto-seed only."""
     ok, reason = admit_seed(repo, spec, repo_entry(repo))
     if not ok:
         log(f"highway seed skip {repo}: {reason}")
