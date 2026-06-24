@@ -2343,10 +2343,16 @@ SPEC_KIND_PRIORITY: dict[str, int] = {
     "readme": 1,
     "smoke_tests": 2,
     "gitignore": 2,
+    "ci_workflow": 2,
+    "version": 2,
+    "py_typed": 2,
+    "requirements_dev": 2,
     "contributing": 3,
     "templates": 3,
+    "security": 2,
+    "changelog": 2,
+    "license": 2,
     "other": 5,
-    "ci_workflow": 9,
 }
 
 
@@ -2621,9 +2627,15 @@ def open_ci_repair_prs(repo: str) -> list[dict[str, Any]]:
 def issue_fix_priority(item: dict[str, Any]) -> tuple[int, int]:
     """Lower = try first. Prefer easy wins that build consistent passes."""
     title = item.get("title") or ""
+    body = item.get("body") or ""
     num = int(item.get("number") or 9999)
     if "html entity" in title.lower() or "usage" in title.lower():
         return (1, num)
+    plan = route_issue("", {"title": title, "body": body}, None)
+    if plan.lane == 0:
+        return (1, num)
+    if plan.lane == 1:
+        return (2, num)
     return (SPEC_KIND_PRIORITY.get(issue_spec_kind(title), 5), num)
 
 
@@ -3012,6 +3024,11 @@ def issue_solvability_tier(repo: str, title: str, issue_num: int) -> str:
         return "blocked"
     if is_stale_ci_issue(title, repo):
         return "stale"
+    plan = route_issue(repo, {"title": title, "body": ""}, repo_entry(repo))
+    if plan.lane == 0:
+        if is_seed_kind_blocked(repo, title):
+            return "blocked"
+        return "easy"
     prio = issue_fix_priority({"title": title, "number": issue_num})[0]
     if prio >= 9 or is_seed_kind_blocked(repo, title):
         return "hard"
@@ -3030,7 +3047,12 @@ def analyze_repo_issue_surface(repo: str, entry: dict[str, Any]) -> dict[str, in
             if is_failure_blocked(repo, "local", title[:80]):
                 counts["blocked"] += 1
                 continue
-            prio = issue_fix_priority({"title": title, "number": 0})[0]
+            plan = route_issue(repo, {"title": title, "body": item.get("body", "")}, entry)
+            if plan.lane == 0:
+                counts["easy"] += 1
+                counts["solvable"] += 1
+                continue
+            prio = issue_fix_priority({"title": title, "body": item.get("body", ""), "number": 0})[0]
             if prio >= 9 or is_seed_kind_blocked(repo, title):
                 counts["hard"] += 1
             elif prio <= 2:

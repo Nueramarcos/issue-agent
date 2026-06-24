@@ -115,20 +115,21 @@ def apply_golden(handler: str, ws: Path, issue: dict[str, Any], repo_meta: dict[
         if not any(k in text for k in ("ci", "workflow", "github actions")):
             return False
         wf_dir = ws / ".github" / "workflows"
-        ci_yml = wf_dir / "ci.yml"
-        if ci_yml.exists():
+        if wf_dir.is_dir() and list(wf_dir.glob("*.yml")):
             return False
+        ci_yml = wf_dir / "ci.yml"
         wf_dir.mkdir(parents=True, exist_ok=True)
+        branches = "[main, master]"
         if (ws / "Cargo.toml").exists():
             ci_yml.write_text(
                 textwrap.dedent(
-                    """\
+                    f"""\
                     name: CI
                     on:
                       push:
-                        branches: [main]
+                        branches: {branches}
                       pull_request:
-                        branches: [main]
+                        branches: {branches}
                     jobs:
                       test:
                         runs-on: ubuntu-latest
@@ -141,26 +142,35 @@ def apply_golden(handler: str, ws: Path, issue: dict[str, Any], repo_meta: dict[
                 encoding="utf-8",
             )
         else:
+            install_steps: list[str] = [
+                "- uses: actions/checkout@v4",
+                "- uses: actions/setup-python@v5",
+                "  with:",
+                '    python-version: "3.12"',
+            ]
+            req_dev = ws / "requirements-dev.txt"
+            if req_dev.exists():
+                install_steps.append("- run: python3 -m pip install -q -r requirements-dev.txt")
+            else:
+                install_steps.append("- run: python3 -m pip install -q pytest")
+            if (ws / "pyproject.toml").exists() or (ws / "setup.py").exists():
+                install_steps.append("- run: python3 -m pip install -q -e . || true")
+            install_steps.append("- run: python3 -m pytest -q")
+            steps_block = "\n                          ".join(install_steps)
             ci_yml.write_text(
                 textwrap.dedent(
-                    """\
+                    f"""\
                     name: CI
                     on:
                       push:
-                        branches: [main]
+                        branches: {branches}
                       pull_request:
-                        branches: [main]
+                        branches: {branches}
                     jobs:
                       test:
                         runs-on: ubuntu-latest
                         steps:
-                          - uses: actions/checkout@v4
-                          - uses: actions/setup-python@v5
-                            with:
-                              python-version: "3.12"
-                          - run: python3 -m pip install -q pytest
-                          - run: python3 -m pip install -q -e . || true
-                          - run: python3 -m pytest -q
+                          {steps_block}
                     """
                 ),
                 encoding="utf-8",
