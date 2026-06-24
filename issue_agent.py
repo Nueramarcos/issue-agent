@@ -124,6 +124,26 @@ def quiet_commands(enabled: bool = True):
         _QUIET_COMMANDS -= 1
 
 
+def github_quiet() -> bool:
+    """When true, failures stay in Flight Recorder only — no GitHub issue comments (no Gmail)."""
+    return os.environ.get("ISSUE_AGENT_GITHUB_QUIET", "0") == "1"
+
+
+def maybe_issue_comment(
+    repo: str,
+    issue_num: int | str,
+    body: str,
+    *,
+    success: bool = False,
+) -> None:
+    if github_quiet() and not success:
+        log(f"quiet: skip issue comment #{issue_num} — {body[:72].replace(chr(10), ' ')}...")
+        return
+    if not repo_has_issues(repo):
+        return
+    run(["gh", "issue", "comment", str(issue_num), "-R", repo, "--body", body], check=False)
+
+
 def log(msg: str) -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -1165,8 +1185,8 @@ def finalize_pr(
         )
         if not ok:
             body = f"🤖 **Issue Agent** PR ready but CI failed — not merging.\n\n```\n{detail[-2500:]}\n```"
-            if issue_num and repo_has_issues(repo):
-                run(["gh", "issue", "comment", str(issue_num), "-R", repo, "--body", body], check=False)
+            if issue_num:
+                maybe_issue_comment(repo, issue_num, body, success=False)
             enqueue_ci_failure(repo, pr_num=pr_num, logs=detail)
             return False, detail
     if cfg.auto_merge:
@@ -1245,7 +1265,7 @@ def resolve_issue(repo: str, issue_num: int, *, dry_run: bool = False) -> int:
             f"Branch: `{branch}` (local workspace only)\n\n"
             f"```\n{test_out[-3000:]}\n```"
         )
-        run(["gh", "issue", "comment", str(issue_num), "-R", repo, "--body", comment], check=False)
+        maybe_issue_comment(repo, issue_num, comment, success=False)
         log(f"tests failed for #{issue_num}")
         record_failure(repo, "issue", str(issue_num), f"tests failed: {test_out[-300:]}", issue_num=issue_num)
         return 1
@@ -1253,7 +1273,7 @@ def resolve_issue(repo: str, issue_num: int, *, dry_run: bool = False) -> int:
     base = default_branch(repo)
     if not has_branch_changes(ws, base):
         comment = "🤖 **Issue Agent** — no file changes produced; skipping PR."
-        run(["gh", "issue", "comment", str(issue_num), "-R", repo, "--body", comment], check=False)
+        maybe_issue_comment(repo, issue_num, comment, success=False)
         log(f"no commits for #{issue_num} — aider produced no changes")
         record_failure(
             repo,
@@ -1274,10 +1294,7 @@ def resolve_issue(repo: str, issue_num: int, *, dry_run: bool = False) -> int:
             issue_summary=issue.get("title", ""),
         )
         if not verdict.passed:
-            run(
-                ["gh", "issue", "comment", str(issue_num), "-R", repo, "--body", tower_block_comment(verdict)],
-                check=False,
-            )
+            maybe_issue_comment(repo, issue_num, tower_block_comment(verdict), success=False)
             record_failure(
                 repo,
                 "issue",
@@ -1310,10 +1327,7 @@ def resolve_issue(repo: str, issue_num: int, *, dry_run: bool = False) -> int:
     if ht is not None and not ht.passed:
         block_fn = getattr(ht, "_block_comment", None)
         body = block_fn(ht) if callable(block_fn) else ht.review_comment
-        run(
-            ["gh", "issue", "comment", str(issue_num), "-R", repo, "--body", body],
-            check=False,
-        )
+        maybe_issue_comment(repo, issue_num, body, success=False)
         record_failure(
             repo,
             "issue",
@@ -1356,7 +1370,7 @@ def resolve_issue(repo: str, issue_num: int, *, dry_run: bool = False) -> int:
     else:
         comment = f"🤖 **Issue Agent** opened PR {pr_url} (auto-merge failed — review manually)."
 
-    run(["gh", "issue", "comment", str(issue_num), "-R", repo, "--body", comment], check=False)
+    maybe_issue_comment(repo, issue_num, comment, success=merged)
     log(f"done #{issue_num} -> {pr_url} (merged={merged})")
     if merged:
         record_success(repo, "issue", str(issue_num), spec_title=issue["title"])
