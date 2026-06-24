@@ -1,0 +1,47 @@
+"""Issue archetype detection — shared by router, factory, and solvability."""
+
+from __future__ import annotations
+
+
+def detect_archetype(title: str, body: str = "") -> str:
+    text = f"{title} {body}".lower()
+    if "junk" in text or "accidental" in text:
+        return "junk"
+    if "license" in text and "file" in text or text.strip().startswith("ensure license"):
+        return "license"
+    if "license" in text and ".md" not in text:
+        return "license"
+    if "contributing" in text:
+        return "contributing"
+    if "security.md" in text or "security policy" in text or "vulnerability" in text:
+        return "security"
+    if "changelog" in text:
+        return "changelog"
+    if "codeowners" in text or "code owners" in text:
+        return "codeowners"
+    if ".gitignore" in text or "gitignore" in text:
+        return "gitignore"
+    if "py.typed" in text:
+        return "py_typed"
+    if "readme" in text or "badge" in text or "shield" in text:
+        return "readme"
+    if "smoke" in text or ("pytest" in text and "test_" in text):
+        return "smoke_tests"
+    if "template" in text or "issue and pr" in text:
+        return "templates"
+    if "ci" in text or "workflow" in text or "github actions" in text:
+        return "ci_workflow"
+    return "other"
+
+
+def is_lane0_candidate(title: str, body: str = "") -> bool:
+    return detect_archetype(title, body) in {
+        "license",
+        "contributing",
+        "security",
+        "changelog",
+        "codeowners",
+        "gitignore",
+        "py_typed",
+        "junk",
+    }

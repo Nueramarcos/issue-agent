@@ -18,6 +18,10 @@ repos:
       stack: python
       bootstrap:
         - python3 -m pip install -q pytest
+    highway:
+      package_root: habitat
+      l0_enabled: true
+      l2_enabled: true
 
   - name: Nueramarcos/orion-ai-agent
     branch: main
@@ -41,6 +45,10 @@ repos:
       stack: python
       bootstrap:
         - python3 -m pip install -q -r requirements-dev.txt
+    highway:
+      package_root: forge
+      l0_enabled: true
+      l2_enabled: false
 
   - name: Nueramarcos/nexus-vision-engine
     branch: main

@@ -1,0 +1,41 @@
+# Archetype → execution lane. Lane 0 = deterministic (0 Ollama tokens).
+archetypes:
+  license:
+    lane: 0
+    handler: template:license
+  contributing:
+    lane: 0
+    handler: template:contributing
+  security:
+    lane: 0
+    handler: template:security
+  changelog:
+    lane: 0
+    handler: template:changelog
+  codeowners:
+    lane: 0
+    handler: template:codeowners
+  gitignore:
+    lane: 0
+    handler: template:gitignore
+  py_typed:
+    lane: 0
+    handler: template:py_typed
+  junk:
+    lane: 0
+    handler: template:junk_delete
+  readme:
+    lane: 1
+    handler: micro:readme
+  smoke_tests:
+    lane: 2
+    handler: aider
+  ci_workflow:
+    lane: 2
+    handler: aider
+  templates:
+    lane: 2
+    handler: aider
+  other:
+    lane: 2
+    handler: aider

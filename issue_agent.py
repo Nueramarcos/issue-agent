@@ -55,6 +55,7 @@ from prompt_loader import (
     load_vision,
     prompt_inventory,
 )
+from highway import HighwayPlan, apply_lane0, is_highway_lane0, route_issue
 from radar import enrich_opportunity
 from tower import TowerVerdict, tower_block_comment, tower_review_workspace
 
@@ -530,23 +531,8 @@ def fork_issue_workspace(repo: str, base_ws: Path, ws: Path) -> None:
 
 
 def _is_doc_issue(issue: dict[str, Any]) -> bool:
-    text = f"{issue.get('title', '')} {issue.get('body') or ''}".lower()
-    keys = (
-        "license",
-        "contributing",
-        "readme",
-        "badge",
-        "py.typed",
-        "codeowners",
-        "code owners",
-        "security.md",
-        "security policy",
-        "vulnerability",
-        "changelog",
-        ".gitignore",
-        "documentation",
-    )
-    return any(k in text for k in keys)
+    """True when Solvability Highway can handle issue without 7b Aider."""
+    return is_highway_lane0(issue)
 
 
 def _fix_model_for_issue(cfg: RepoConfig, issue: dict[str, Any]) -> str:
@@ -555,94 +541,28 @@ def _fix_model_for_issue(cfg: RepoConfig, issue: dict[str, Any]) -> str:
     return cfg.model
 
 
-def _try_doc_template_fix(ws: Path, issue: dict[str, Any]) -> bool:
-    """Deterministic single-file doc fixes when aider stalls (no network)."""
-    title = (issue.get("title") or "").lower()
-    body = (issue.get("body") or "").lower()
-    year = datetime.now(timezone.utc).year
-
-    if "license" in title and not (ws / "LICENSE").exists():
-        (ws / "LICENSE").write_text(
-            textwrap.dedent(
-                f"""\
-                MIT License
-
-                Copyright (c) {year} Nueramarcos
-
-                Permission is hereby granted, free of charge, to any person obtaining a copy
-                of this software and associated documentation files (the "Software"), to deal
-                in the Software without restriction, including without limitation the rights
-                to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-                copies of the Software, and to permit persons to whom the Software is
-                furnished to do so, subject to the following conditions:
-
-                The above copyright notice and this permission notice shall be included in all
-                copies or substantial portions of the Software.
-
-                THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-                IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-                FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-                AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-                LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-                OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-                SOFTWARE.
-                """
-            ),
-            encoding="utf-8",
+def _try_highway_lane0(ws: Path, repo: str, issue: dict[str, Any]) -> tuple[bool, HighwayPlan | None]:
+    """Lane 0 — deterministic templates, zero Ollama tokens."""
+    meta = repo_entry(repo)
+    plan = route_issue(repo, issue, meta)
+    if plan.lane == -1:
+        log(f"highway skip: {plan.skip_reason} (archetype={plan.archetype})")
+        return False, plan
+    if plan.lane != 0:
+        return False, plan
+    if apply_lane0(ws, issue, plan, meta):
+        log(f"highway L0 applied — {plan.handler} (archetype={plan.archetype})")
+        append_flight_record(
+            {
+                "outcome": "highway_l0",
+                "repo": repo,
+                "handler": plan.handler,
+                "archetype": plan.archetype,
+                "ollama_tokens": 0,
+            }
         )
-        return True
-
-    if "py.typed" in title or "py.typed" in body:
-        target = ws / "habitat" / "py.typed"
-        if not target.exists():
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.touch()
-            return True
-
-    if "codeowners" in title or "code owners" in title:
-        target = ws / "CODEOWNERS"
-        if not target.exists():
-            owner = os.environ.get("HABITAT_GITHUB_OWNER", "Nueramarcos")
-            target.write_text(f"habitat/ @{owner}\n", encoding="utf-8")
-            return True
-
-    if "security.md" in title or "security.md" in body or "vulnerability reporting" in body:
-        target = ws / "SECURITY.md"
-        if not target.exists():
-            owner = os.environ.get("HABITAT_GITHUB_OWNER", "Nueramarcos")
-            target.write_text(
-                textwrap.dedent(
-                    f"""\
-                    # Security Policy
-
-                    ## Reporting a Vulnerability
-
-                    Open a private GitHub security advisory or email **@{owner}**.
-                    Include reproduction steps and impact. We aim to respond within 7 days.
-                    """
-                ),
-                encoding="utf-8",
-            )
-            return True
-
-    if "changelog" in title or "changelog.md" in body:
-        target = ws / "CHANGELOG.md"
-        if not target.exists():
-            target.write_text(
-                textwrap.dedent(
-                    f"""\
-                    # Changelog
-
-                    ## [0.1.0] - {year}-01-01
-
-                    - Initial Habitat demo release
-                    """
-                ),
-                encoding="utf-8",
-            )
-            return True
-
-    return False
+        return True, plan
+    return False, plan
 
 
 def repo_entry(repo: str) -> dict[str, Any]:
@@ -1494,11 +1414,17 @@ def resolve_issue(repo: str, issue_num: int, *, dry_run: bool = False) -> int:
     gates_ok = False
     for attempt in range(1, max_retries + 1):
         log(f"fix attempt {attempt}/{max_retries} for #{issue_num}")
-        if attempt == 1 and _is_doc_issue(issue) and _try_doc_template_fix(ws, issue):
-            log("doc template applied — skipping aider for single-file doc issue")
-            run(["git", "add", "-A"], cwd=ws, check=False)
-            run(["git", "commit", "-m", f"Fix issue #{issue_num} (doc template)"], cwd=ws, check=False)
-        else:
+        applied_l0 = False
+        if attempt == 1:
+            applied_l0, hw_plan = _try_highway_lane0(ws, repo, issue)
+            if applied_l0:
+                log("highway L0 — skipping aider (0 Ollama tokens)")
+                run(["git", "add", "-A"], cwd=ws, check=False)
+                run(["git", "commit", "-m", f"Fix issue #{issue_num} (highway L0)"], cwd=ws, check=False)
+            elif hw_plan and hw_plan.lane == -1:
+                log(f"highway blocked — {hw_plan.skip_reason}")
+                return 1
+        if not applied_l0:
             _run_aider_attempt(ws, repo, cfg, issue_num, issue, feedback=feedback, plan=plan)
         gates_ok, feedback = _local_gates(ws, repo, cfg, issue_num, issue, base=base)
         if gates_ok:
