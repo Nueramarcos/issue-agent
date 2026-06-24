@@ -35,6 +35,10 @@ def detect_archetype(title: str, body: str = "") -> str:
         return "rust_unit_test"
     if "docstring" in text and "__init__.py" in text:
         return "docstring"
+    if "html entity" in text or "&amp;" in text:
+        return "readme_entity"
+    if "--version" in text and any(k in text for k in ("cli", "argparse", " flag", "entry")):
+        return "cli_version"
     if "__version__" in text or "version constant" in text or "version export" in text:
         return "version"
     if "smoke" in text or ("pytest" in text and "test_" in text):
@@ -64,6 +68,8 @@ LANE0_ARCHETYPES = frozenset(
         "cargo_meta",
         "rust_unit_test",
         "docstring",
+        "cli_version",
+        "readme_entity",
         "junk",
         "version",
         "requirements_dev",

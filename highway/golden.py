@@ -21,6 +21,8 @@ GOLDEN_HANDLERS = frozenset(
         "template:cargo_meta",
         "template:rust_unit_test",
         "template:docstring",
+        "template:cli_version",
+        "template:readme_entity",
     }
 )
 
@@ -372,4 +374,95 @@ def apply_golden(handler: str, ws: Path, issue: dict[str, Any], repo_meta: dict[
         )
         return True
 
+    if handler == "template:cli_version":
+        if "--version" not in text:
+            return False
+        return _apply_cli_version(ws, text)
+
+    if handler == "template:readme_entity":
+        if "html entity" not in text and "&amp;" not in text:
+            return False
+        readme = ws / "README.md"
+        if not readme.exists():
+            return False
+        content = readme.read_text(encoding="utf-8")
+        if "&amp;" not in content:
+            return False
+        readme.write_text(content.replace("&amp;", "&"), encoding="utf-8")
+        return True
+
     return False
+
+
+def _cli_version_paths(ws: Path, text: str) -> list[Path]:
+    found: list[Path] = []
+    for m in re.finditer(r"[\w./-]+\.py", text):
+        rel = m.group(0).lstrip("./")
+        candidate = ws / rel
+        if candidate.is_file():
+            found.append(candidate)
+    if found:
+        return found
+    for name in ("cli.py", "ast_parser.py"):
+        for candidate in ws.rglob(name):
+            if "test" in candidate.parts or ".venv" in candidate.parts:
+                continue
+            found.append(candidate)
+    return found
+
+
+def _cli_version_satisfied(content: str) -> bool:
+    if re.search(
+        r'add_argument\(\s*["\']--version["\'][^)]*action\s*=\s*["\']version["\']',
+        content,
+        re.S,
+    ):
+        return True
+    if not re.search(r'add_argument\(\s*["\']--version["\']', content):
+        return False
+    main_m = re.search(r"def main\([^)]*\)[^:]*:(.*?)(?=\n(?:def |class |\Z))", content, re.S)
+    return bool(main_m and re.search(r"if\s+args\.version\b", main_m.group(1)))
+
+
+def _apply_cli_version(ws: Path, text: str) -> bool:
+    changed = False
+    for cli_file in _cli_version_paths(ws, text):
+        content = cli_file.read_text(encoding="utf-8")
+        if _cli_version_satisfied(content):
+            continue
+        new_content = content
+        if re.search(r'add_argument\(\s*["\']--version["\'].*action\s*=\s*["\']store_true["\']', new_content):
+            new_content = re.sub(
+                r'(add_argument\(\s*["\']--version["\'][^)]*)action\s*=\s*["\']store_true["\']',
+                r'\1action="version", version=f"%(prog)s {__version__}"',
+                new_content,
+                count=1,
+            )
+        elif 'add_argument("--version"' not in new_content and "add_argument('--version'" not in new_content:
+            m = re.search(r"(parser|p)\.add_argument\(\s*[\"']-v[\"']", new_content)
+            if m:
+                anchor = m.group(0)
+                insert = anchor.replace(
+                    "add_argument",
+                    'add_argument("--version", action="version", version=f"%(prog)s {__version__}")\n    '
+                    + m.group(1) + ".add_argument",
+                    1,
+                )
+                new_content = new_content.replace(anchor, insert, 1)
+        if "__version__" not in new_content and "from . import __version__" not in new_content:
+            if re.search(r"def main\(", new_content):
+                new_content = re.sub(
+                    r"(def main\([^)]*\)[^:]*:\n)",
+                    r"\1    from . import __version__\n",
+                    new_content,
+                    count=1,
+                )
+        new_content = re.sub(
+            r"\n\s+if args\.version:\n\s+print\(__version__\)\n\s+return 0\n",
+            "\n",
+            new_content,
+        )
+        if new_content != content:
+            cli_file.write_text(new_content, encoding="utf-8")
+            changed = True
+    return changed

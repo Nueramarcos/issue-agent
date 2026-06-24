@@ -36,6 +36,12 @@ archetypes:
   docstring:
     lane: 0
     handler: template:docstring
+  cli_version:
+    lane: 0
+    handler: template:cli_version
+  readme_entity:
+    lane: 0
+    handler: template:readme_entity
   junk:
     lane: 0
     handler: template:junk_delete

@@ -77,6 +77,16 @@ def issue_already_satisfied(ws: Path, issue: dict[str, Any], plan: HighwayPlan) 
             low = readme.read_text(encoding="utf-8", errors="replace").lower()
             if "shields.io" in low or "badge.svg" in low:
                 return True
+    if arch == "cli_version":
+        from highway.golden import _cli_version_paths, _cli_version_satisfied
+
+        for cli_file in _cli_version_paths(ws, text):
+            if _cli_version_satisfied(cli_file.read_text(encoding="utf-8", errors="replace")):
+                return True
+    if arch == "readme_entity":
+        readme = ws / "README.md"
+        if readme.exists() and "&amp;" not in readme.read_text(encoding="utf-8", errors="replace"):
+            return True
     if arch == "version":
         for init in ws.rglob("__init__.py"):
             if "__version__" in init.read_text(encoding="utf-8", errors="replace"):
