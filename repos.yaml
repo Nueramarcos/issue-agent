@@ -69,6 +69,11 @@ repos:
       bootstrap:
         - python3 -m pip install -q pytest
         - python3 -m pip install -e . -q
+    highway:
+      package_root: nexus
+      l0_enabled: true
+      l1_enabled: true
+      l2_enabled: false
 
   - name: Nueramarcos/vertex-sim-core
     branch: main
@@ -80,6 +85,11 @@ repos:
     habitat:
       stack: rust
       bootstrap: []
+    highway:
+      package_root: Vertex
+      l0_enabled: true
+      l1_enabled: true
+      l2_enabled: false
 
   - name: Nueramarcos/tinygrad
     branch: master

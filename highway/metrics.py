@@ -38,6 +38,18 @@ def load_recent_entries(hours: int = 24) -> list[dict[str, Any]]:
     return rows
 
 
+def highway_wins_by_repo(hours: int = 48) -> dict[str, int]:
+    """Count L0+L1 highway successes per repo in the recent window."""
+    wins: dict[str, int] = {}
+    for row in load_recent_entries(hours):
+        if row.get("outcome") not in ("highway_l0", "highway_l1"):
+            continue
+        repo = str(row.get("repo") or "")
+        if repo:
+            wins[repo] = wins.get(repo, 0) + 1
+    return wins
+
+
 def highway_stats(hours: int = 24) -> dict[str, Any]:
     rows = load_recent_entries(hours)
     outcomes = Counter()

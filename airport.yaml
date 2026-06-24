@@ -1,4 +1,4 @@
-# Airport — demo + forge + orion (highway L0/L1; L2 disabled on forge/orion)
+# Airport — demo + forge + orion + nexus + vertex (highway L0/L1 fleet)
 enabled: true
 park_minutes: 5
 local_first: true
@@ -26,5 +26,17 @@ lanes:
   - repo: Nueramarcos/orion-ai-agent
     kind: github
     interval: 420
+    collect_max: 2
+    fix_max: 1
+
+  - repo: Nueramarcos/nexus-vision-engine
+    kind: github
+    interval: 480
+    collect_max: 2
+    fix_max: 1
+
+  - repo: Nueramarcos/vertex-sim-core
+    kind: github
+    interval: 540
     collect_max: 2
     fix_max: 1

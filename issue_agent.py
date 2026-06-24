@@ -64,6 +64,7 @@ from highway import (
     apply_lane1,
     format_stats_report,
     highway_stats,
+    highway_wins_by_repo,
     is_highway_lane0,
     route_issue,
     spec_highway_lane,
@@ -775,7 +776,9 @@ def triage_issue(repo: str, issue_num: int, cfg: RepoConfig) -> dict[str, Any]:
 def run_tests(ws: Path, test_cmd: str | None, *, strict: bool = True) -> tuple[bool, str]:
     if not test_cmd:
         return True, "no test command configured"
-    cmd = test_cmd.replace("python ", "python3 ").replace("pip install", "python3 -m pip install")
+    cmd = test_cmd.replace("python ", "python3 ")
+    if "python3 -m pip install" not in cmd:
+        cmd = cmd.replace("pip install", "python3 -m pip install")
     result = run(cmd, cwd=ws, shell=True, check=False)
     output = (result.stdout or "") + (result.stderr or "")
     if result.returncode == 0:
@@ -2953,6 +2956,10 @@ def compute_repo_solvability(repo: str, entry: dict[str, Any] | None = None, *, 
         score += 2
     if stack == "fork":
         score -= 3
+
+    hw_wins = highway_wins_by_repo(hours=48).get(repo, 0)
+    factors["highway_wins_48h"] = hw_wins
+    score += min(15, hw_wins * 5)
 
     score = max(0, min(100, int(round(score))))
     if score >= 70:

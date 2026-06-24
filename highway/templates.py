@@ -170,6 +170,8 @@ def apply_template(handler: str, ws: Path, issue: dict[str, Any], repo_meta: dic
             "dist/",
             "*.egg-info/",
         ]
+        if (ws / "Cargo.toml").exists():
+            patterns.extend(["/target/", "target/", "Cargo.lock"])
         existing = target.read_text(encoding="utf-8") if target.exists() else ""
         added = []
         for pat in patterns:

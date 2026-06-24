@@ -237,6 +237,28 @@ repos:
     - good first issue
     highway_lane: 0
   Nueramarcos/nexus-vision-engine:
+  - title: Add SECURITY.md vulnerability reporting policy
+    body: 'Create SECURITY.md with vulnerability reporting instructions.
+
+      Max 12 lines. One file only.
+
+      '
+    labels:
+    - agent-triage
+    - documentation
+    - good first issue
+    highway_lane: 0
+  - title: Add CHANGELOG.md for initial release
+    body: 'Create CHANGELOG.md with ## [0.1.0] initial release entry.
+
+      Max 10 lines. One file only.
+
+      '
+    labels:
+    - agent-triage
+    - documentation
+    - good first issue
+    highway_lane: 0
   - title: Add .gitignore for Python build artifacts
     body: 'Add __pycache__/, .pytest_cache/, *.pyc, dist/, *.egg-info/ to .gitignore
       if missing.
@@ -346,6 +368,28 @@ repos:
     - good first issue
     highway_lane: 2
   Nueramarcos/vertex-sim-core:
+  - title: Add SECURITY.md vulnerability reporting policy
+    body: 'Create SECURITY.md with vulnerability reporting instructions.
+
+      Max 12 lines. One file only.
+
+      '
+    labels:
+    - agent-triage
+    - documentation
+    - good first issue
+    highway_lane: 0
+  - title: Add CHANGELOG.md for initial release
+    body: 'Create CHANGELOG.md with ## [0.1.0] initial release entry.
+
+      Max 10 lines. One file only.
+
+      '
+    labels:
+    - agent-triage
+    - documentation
+    - good first issue
+    highway_lane: 0
   - title: Add .gitignore for Rust target dir
     body: 'Ensure .gitignore includes /target/ and Cargo.lock if missing.
 
