@@ -539,6 +539,9 @@ def _is_doc_issue(issue: dict[str, Any]) -> bool:
         "py.typed",
         "codeowners",
         "code owners",
+        "security.md",
+        "security policy",
+        "vulnerability",
         ".gitignore",
         "documentation",
     )
