@@ -265,6 +265,165 @@ def _gh_issue_view_rest(repo: str, issue_num: str, fields: str) -> dict[str, Any
     return out
 
 
+def _graphql_rate_limited(stderr: str) -> bool:
+    s = (stderr or "").lower()
+    return "rate limit" in s and ("graphql" in s or "api rate limit" in s)
+
+
+def _gh_pr_lookup_rest(repo: str, *, head: str, base: str) -> str:
+    owner, name = repo.split("/", 1)
+    for head_ref in (f"{owner}:{head}", head):
+        result = run(
+            [
+                "gh",
+                "api",
+                f"repos/{owner}/{name}/pulls",
+                "-f",
+                f"head={head_ref}",
+                "-f",
+                f"base={base}",
+                "-f",
+                "state=open",
+                "--jq",
+                ".[0].html_url",
+            ],
+            check=False,
+        )
+        url = (result.stdout or "").strip()
+        if url and url != "null":
+            return url
+    return ""
+
+
+def _gh_pr_create_rest(
+    repo: str,
+    *,
+    head: str,
+    title: str,
+    body: str,
+    base: str,
+    draft: bool = False,
+) -> str:
+    owner, name = repo.split("/", 1)
+    args = [
+        "gh",
+        "api",
+        f"repos/{owner}/{name}/pulls",
+        "-f",
+        f"title={title[:255]}",
+        "-f",
+        f"head={head}",
+        "-f",
+        f"base={base}",
+        "-f",
+        f"body={body}",
+    ]
+    if draft:
+        args.extend(["-f", "draft=true"])
+    result = run(args, check=False)
+    if result.returncode == 0 and (result.stdout or "").strip():
+        data = json.loads(result.stdout)
+        return str(data.get("html_url") or "")
+    existing = _gh_pr_lookup_rest(repo, head=head, base=base)
+    if existing:
+        log(f"create_pull_request: reusing open PR {existing}")
+        return existing
+    raise RuntimeError((result.stderr or result.stdout or "REST PR create failed").strip())
+
+
+def create_pull_request(
+    repo: str,
+    *,
+    head: str,
+    title: str,
+    body: str,
+    base: str | None = None,
+    draft: bool = False,
+    cwd: Path | None = None,
+) -> str:
+    """Create a PR via gh CLI; REST fallback when GraphQL is rate-limited."""
+    base = base or default_branch(repo)
+    pr_args = [
+        "gh",
+        "pr",
+        "create",
+        "-R",
+        repo,
+        "--head",
+        head,
+        "--title",
+        title[:70],
+        "--body",
+        body,
+    ]
+    if draft:
+        pr_args.append("--draft")
+    pr = run(pr_args, cwd=cwd, check=False)
+    pr_url = (pr.stdout or "").strip()
+    if pr_url and pr.returncode == 0:
+        return pr_url
+    if _graphql_rate_limited(pr.stderr or ""):
+        log(f"create_pull_request: REST fallback for {repo} ({head})")
+        return _gh_pr_create_rest(
+            repo, head=head, title=title[:70], body=body, base=base, draft=draft
+        )
+    return ""
+
+
+def _gh_pr_merge_rest(repo: str, pr_num: str, *, squash: bool = True) -> tuple[bool, str]:
+    owner, name = repo.split("/", 1)
+    method = "squash" if squash else "merge"
+    result = run(
+        [
+            "gh",
+            "api",
+            "-X",
+            "PUT",
+            f"repos/{owner}/{name}/pulls/{pr_num}/merge",
+            "-f",
+            f"merge_method={method}",
+        ],
+        check=False,
+    )
+    if result.returncode == 0:
+        return True, ""
+    return False, (result.stderr or result.stdout or "REST merge failed").strip()
+
+
+def merge_pull_request(
+    repo: str,
+    pr_num: str,
+    *,
+    auto: bool = False,
+    squash: bool = True,
+    delete_branch: bool = True,
+) -> tuple[bool, str]:
+    flags: list[str] = []
+    if auto:
+        flags.append("--auto")
+    if squash:
+        flags.append("--squash")
+    if delete_branch:
+        flags.append("--delete-branch")
+    merge = run(["gh", "pr", "merge", pr_num, "-R", repo, *flags], check=False)
+    if merge.returncode == 0:
+        return True, ""
+    stderr = merge.stderr or ""
+    if _graphql_rate_limited(stderr):
+        log(f"merge_pull_request: REST fallback for {repo}#{pr_num}")
+        return _gh_pr_merge_rest(repo, pr_num, squash=squash)
+    if merge.returncode != 0 and auto:
+        merge = run(
+            ["gh", "pr", "merge", pr_num, "-R", repo, "--squash", "--delete-branch"],
+            check=False,
+        )
+        if merge.returncode == 0:
+            return True, ""
+        if _graphql_rate_limited(merge.stderr or ""):
+            return _gh_pr_merge_rest(repo, pr_num, squash=True)
+    return False, (merge.stderr or merge.stdout or "merge failed").strip()
+
+
 def gh_json(args: list[str]) -> Any:
     cmd = ["gh", *args]
     if "--json" not in args:
@@ -1262,26 +1421,15 @@ def push_ci_repair_pr(
             return 1
 
     run(["git", "push", "-u", "origin", branch, "--force-with-lease"], cwd=ws, check=False)
-    pr = run(
-        [
-            "gh",
-            "pr",
-            "create",
-            "-R",
-            repo,
-            "--head",
-            branch,
-            "--title",
-            title[:70],
-            "--body",
-            body[:3500] + "\n\n---\n*Issue Agent CI heal · Nueramarcos*",
-        ],
+    pr_url = create_pull_request(
+        repo,
+        head=branch,
+        title=title[:70],
+        body=body[:3500] + "\n\n---\n*Issue Agent CI heal · Nueramarcos*",
         cwd=ws,
-        check=False,
     )
-    pr_url = (pr.stdout or "").strip()
-    if not pr_url or pr.returncode != 0:
-        log(f"CI repair PR failed: {(pr.stderr or '').strip()}")
+    if not pr_url:
+        log("CI repair PR failed")
         return 1
 
     merged, detail = finalize_pr(repo, pr_url, cfg, issue_num=issue_num)
@@ -1319,14 +1467,15 @@ def finalize_pr(
             enqueue_ci_failure(repo, pr_num=pr_num, logs=detail)
             return False, detail
     if cfg.auto_merge:
-        merge_flags = ["--squash", "--delete-branch"]
-        if not cfg.wait_for_checks:
-            merge_flags.insert(0, "--auto")
-        merge = run(["gh", "pr", "merge", pr_num, "-R", repo, *merge_flags], check=False)
-        if merge.returncode != 0 and not cfg.wait_for_checks:
-            merge = run(["gh", "pr", "merge", pr_num, "-R", repo, "--squash", "--delete-branch"], check=False)
-        if merge.returncode != 0:
-            return False, (merge.stderr or merge.stdout or "merge failed").strip()
+        merged, detail = merge_pull_request(
+            repo,
+            pr_num,
+            auto=not cfg.wait_for_checks,
+            squash=True,
+            delete_branch=True,
+        )
+        if not merged:
+            return False, detail
     return True, pr_url
 
 
@@ -1592,25 +1741,17 @@ def resolve_issue(repo: str, issue_num: int, *, dry_run: bool = False) -> int:
 
     # push + draft PR (only after all local gates green)
     run(["git", "push", "-u", "origin", branch, "--force-with-lease"], cwd=ws, check=False)
-    pr_args = [
-        "gh",
-        "pr",
-        "create",
-        "-R",
+    draft = cfg.draft_pr or os.environ.get("HABITAT_DRAFT_PR", "0") == "1"
+    pr_url = create_pull_request(
         repo,
-        "--head",
-        branch,
-        "--title",
-        f"Fix #{issue_num}: {issue['title'][:70]}",
-        "--body",
-        f"Automated local fix for #{issue_num}.\n\nCloses #{issue_num}{plan_section}\n\n---\n*Generated by Issue Agent on Nueramarcos*",
-    ]
-    if cfg.draft_pr or os.environ.get("HABITAT_DRAFT_PR", "0") == "1":
-        pr_args.append("--draft")
-    pr = run(pr_args, cwd=ws, check=False)
-    pr_url = (pr.stdout or "").strip()
-    if not pr_url or pr.returncode != 0:
-        log(f"PR creation failed: {(pr.stderr or pr.stdout or '').strip()}")
+        head=branch,
+        title=f"Fix #{issue_num}: {issue['title'][:70]}",
+        body=f"Automated local fix for #{issue_num}.\n\nCloses #{issue_num}{plan_section}\n\n---\n*Generated by Issue Agent on Nueramarcos*",
+        draft=draft,
+        cwd=ws,
+    )
+    if not pr_url:
+        log("PR creation failed")
         return 1
 
     merged, detail = finalize_pr(repo, pr_url, cfg, issue_num=issue_num)
@@ -4553,21 +4694,12 @@ def cmd_upstream(args: argparse.Namespace) -> int:
                     else:
                         push = run(["git", "push", "-u", "origin", branch], cwd=repo_path, check=False)
                         if push.returncode == 0:
-                            run(
-                                [
-                                    "gh",
-                                    "pr",
-                                    "create",
-                                    "-R",
-                                    fork,
-                                    "--head",
-                                    branch,
-                                    "--title",
-                                    proj.get("pr_title", f"fix: upstream lane {slug}"),
-                                    "--body",
-                                    proj.get("pr_body", f"Automated upstream lane — {slug}.\n"),
-                                ],
-                                check=False,
+                            create_pull_request(
+                                fork,
+                                head=branch,
+                                title=proj.get("pr_title", f"fix: upstream lane {slug}"),
+                                body=proj.get("pr_body", f"Automated upstream lane — {slug}.\n"),
+                                cwd=repo_path,
                             )
                 elif not ok:
                     tail = (test.stderr or test.stdout or "")[-500:]
@@ -5048,25 +5180,16 @@ def resolve_issue_local(
             return 1
 
     run(["git", "push", "-u", "origin", branch, "--force-with-lease"], cwd=ws, check=False)
-    pr_args = [
-        "gh",
-        "pr",
-        "create",
-        "-R",
+    pr_url = create_pull_request(
         repo,
-        "--head",
-        branch,
-        "--title",
-        title[:70],
-        "--body",
-        f"Automated local fix.\n\n## Task\n{body}\n\n---\n*Issue Agent · Nueramarcos*",
-    ]
-    if cfg.draft_pr:
-        pr_args.append("--draft")
-    pr = run(pr_args, cwd=ws, check=False)
-    pr_url = (pr.stdout or "").strip()
-    if not pr_url or pr.returncode != 0:
-        log(f"PR failed: {(pr.stderr or '').strip()}")
+        head=branch,
+        title=title[:70],
+        body=f"Automated local fix.\n\n## Task\n{body}\n\n---\n*Issue Agent · Nueramarcos*",
+        draft=cfg.draft_pr,
+        cwd=ws,
+    )
+    if not pr_url:
+        log("PR failed")
         return 1
     merged, detail = finalize_pr(repo, pr_url, cfg)
     log(f"local fix {'merged' if merged else 'waiting on CI'} -> {pr_url}")
