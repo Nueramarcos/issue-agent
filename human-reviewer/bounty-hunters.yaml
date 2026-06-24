@@ -1,0 +1,11 @@
+# Curated bounty hunters and trusted contributors — expand as you discover voices.
+authors:
+  - login: syb0rg
+    note: tinygrad bounty hunter (test_sum / Mac perf)
+  - login: geohot
+    note: tinygrad maintainer — direct review style
+  - login: dmlc
+    note: mlx / ML OSS contributor pattern
+
+# Optional: only collect PRs authored by these logins (empty = all authors)
+filter_authors_only: false

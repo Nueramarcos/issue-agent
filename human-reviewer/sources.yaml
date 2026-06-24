@@ -1,0 +1,12 @@
+# Human Reviewer — repos to mine for maintainer-voice training data.
+# Priority: repos where humans review with substance (bounties, OSS maintainers).
+
+repos:
+  - Nueramarcos/agent-habitat-demo   # 11 merged agent rounds — baseline corpus
+  - tinygrad/tinygrad                # strict human bar; AI PRs often rejected
+  - pytorch/vision                   # classic bounty / contributor reviews
+  - numpy/numpy                      # high-quality maintainer discourse
+  - psf/requests                     # small, readable review threads
+
+# PRs from these logins get bounty_hunter=true in corpus
+bounty_hunters: []

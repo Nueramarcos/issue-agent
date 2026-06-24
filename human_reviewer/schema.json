@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Human Review Corpus Record",
+  "description": "One JSONL line — a merged or rejected PR with human review discourse for training Human Tower.",
+  "type": "object",
+  "required": ["id", "repo", "pr_number", "verdict", "ts"],
+  "properties": {
+    "id": { "type": "string", "description": "repo#pr_number" },
+    "repo": { "type": "string" },
+    "pr_number": { "type": "integer" },
+    "pr_url": { "type": "string" },
+    "title": { "type": "string" },
+    "body": { "type": "string" },
+    "author": { "type": "string" },
+    "merged_at": { "type": "string" },
+    "closed_at": { "type": "string" },
+    "verdict": {
+      "type": "string",
+      "enum": ["merged", "rejected", "closed_without_merge"]
+    },
+    "issue_numbers": { "type": "array", "items": { "type": "integer" } },
+    "files_changed": { "type": "array", "items": { "type": "string" } },
+    "additions": { "type": "integer" },
+    "deletions": { "type": "integer" },
+    "diff_excerpt": { "type": "string" },
+    "reviews": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "author": { "type": "string" },
+          "state": { "type": "string" },
+          "body": { "type": "string" },
+          "submitted_at": { "type": "string" }
+        }
+      }
+    },
+    "review_comments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "author": { "type": "string" },
+          "path": { "type": "string" },
+          "body": { "type": "string" }
+        }
+      }
+    },
+    "maintainer_voice": { "type": "string", "description": "Primary human review message used as training target" },
+    "bounty_hunter": { "type": "boolean" },
+    "source": { "type": "string" },
+    "ts": { "type": "string", "format": "date-time" }
+  }
+}
